@@ -14,7 +14,7 @@ plus anciens), protege par un jeton Bearer.
 
 ```
 npm install --omit=dev
-MCP_TOKEN=un-long-secret node server.js      # PORT fourni par la plateforme, 8080 sinon
+MCP_TOKEN=un-long-secret node server.js      # PORT fourni par la plateforme, 3000 sinon
 ```
 
 Variables : `MCP_TOKEN` (obligatoire), `PORT`, `CARNET_API` (defaut : l'API de production).

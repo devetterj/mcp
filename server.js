@@ -8,7 +8,7 @@ import { register } from "./tools.js";
 
 const TOKEN = process.env.MCP_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error("MCP_TOKEN manquant ou trop court (variable d'environnement)"); process.exit(1); }
-const PORT = Number(process.env.PORT) || 8080;
+const PORT = Number(process.env.PORT) || 3000;
 
 const handler = createMcpHandler(() => {
   const server = new McpServer({ name: "carnet-muscu", version: "1.0.0" });
