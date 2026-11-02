@@ -30,6 +30,7 @@ function exerciseView(state, ex, block) {
   return { name: ex.n, label: ex.label, block: block || null, type: ex.type, range: ex.r, sets: ex.s, increment: ex.inc,
     unit: ex.time ? "s" : ex.unit, gear: ex.gear, rest_s: ex.rest, timed: !!ex.time, bodyweight_ok: !!ex.pdc,
     disabled: ex.disabled ? { since: d10(ex.disabled.since), reason: ex.disabled.reason } : null,
+    profile: ex.profile, variant: ex.variant, free_variant: ex.free, anchor: ex.anchor, max_load: C.maxLoad(state, ex),
     next_target: state.next_targets[ex.n] || null };
 }
 
@@ -46,6 +47,10 @@ function reason(ex, g) {
     case "short": return `seulement ${g.n} serie(s) de travail la derniere fois : on complete`;
     case "time": return "exercice chronometre : +5 s par serie non au max";
     case "timemax": return `${mx} s partout : passer a une variante plus dure`;
+    case "variant": return `plafond du materiel a ${g.from} : passer en variante "${g.next}" et repartir a ${mn} reps`;
+    case "setplus": return `toutes les variantes passees a ${g.from} : ajouter une ${g.sets}e serie`;
+    case "variantfree": return `haut de la fourchette atteint au poids du corps : durcir la variante (angle, pieds sureleves, lest)`;
+    case "maxed": return `au bout des variantes a ${g.from} : ajouter des reps ou changer d'exercice`;
   }
   return g.kind;
 }
@@ -54,16 +59,18 @@ export function register(server) {
   /* ------------------------------------------------------------ lecture */
   server.registerTool("get_program", {
     title: "Programme",
-    description: "Le programme d'entrainement : rotation des seances, exercices de chaque seance (type, fourchette de reps, series, increment, unite, repos), exercices desactives avec motif, cibles imposees en attente, materiel disponible et reglages de progression.",
+    description: "Le programme d'entrainement : profil de materiel actif (salle ou maison), rotation active, exercices de chaque seance du profil actif (type, fourchette, series, increment, unite, repos, variante en cours, plafond de charge), exercices desactives avec motif, cibles imposees, materiel de chaque profil et reglages de progression. En profil Maison les charges sont plafonnees (halteres 20 kg) : la progression passe par les variantes.",
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true }
   }, run(async () => {
     const { rev, state } = await load();
-    return { rev, rotation: state.program.rotation, next_session: C.nextSession(state),
-      sessions: state.program.sessions.map(s => ({ id: s.id, name: s.name, warmup: s.warm,
+    const pid = state.activeProfile;
+    return { rev, active_profile: pid, profiles: state.profiles, rotation: C.rotation(state), rotations: state.program.rotations, next_session: C.nextSession(state),
+      variant_order: state.settings.variantOrder,
+      sessions: state.program.sessions.filter(s => (s.profile || "salle") === pid).map(s => ({ id: s.id, name: s.name, warmup: s.warm,
         exercises: C.sessionExercises(state, s.id, { includeDisabled: true }).map(({ block, ex }) => exerciseView(state, ex, block)) })),
-      other_exercises: C.exercises(state).filter(e => !state.program.sessions.some(s => s.blocks.some(b => b.ex.includes(e.n)))).map(e => e.n),
-      plates: state.plates, settings: state.settings, types: C.TYPES };
+      other_profile_sessions: state.program.sessions.filter(s => (s.profile || "salle") !== pid).map(s => ({ id: s.id, name: s.name, profile: s.profile || "salle" })),
+      settings: state.settings, types: C.TYPES };
   }));
 
   server.registerTool("get_history", {
@@ -127,9 +134,10 @@ export function register(server) {
     const { state } = await load();
     const id = session || C.nextSession(state);
     if (!C.session(state, id)) throw new Error("seance inconnue : " + id);
-    return { session: id, name: C.session(state, id).name,
+    return { session: id, name: C.session(state, id).name, profile: state.activeProfile, gear: C.sessionGear(state, id),
       exercises: C.planSession(state, id).map(({ block, ex, suggestion: g, last }) => ({
         name: ex.n, label: ex.label, block, kind: g.kind, weight: ex.time ? null : g.w, plan_reps: g.plan, unit: ex.time ? "s" : ex.unit,
+        variant: g.kind === "variant" ? g.next : (g.variant || null), gear: ex.gear, band_combo: ex.gear === "band" && g.w > 0 ? C.bandCombo(state, g.w) : null, anchor: ex.anchor,
         last: last ? { date: last.date, top: ex.time ? null : last.top, work_reps: last.work, all_sets: last.all.map(x => ({ w: x.w, r: x.r })) } : null,
         reason: reason(ex, g), notes: C.notes(state, { exercise: ex.n, session: id }).map(n => ({ author: n.author, text: n.text })) })) };
   }));
@@ -164,7 +172,7 @@ export function register(server) {
   }, run(async ({ min_sessions = 4 }) => {
     const { state } = await load();
     const r = C.report(state, Date.now(), { stagnantAfter: min_sessions });
-    return { stagnant: r.stagnant.map(e => ({ exercise: e.exercise, no_progress_sessions: e.noProgress, best: e.best, current: e.current, unit: e.unit, trend_4w: e.trend4, trend_8w: e.trend8 })),
+    return { profile: r.profile, stagnant: r.stagnant.map(e => ({ exercise: e.exercise, no_progress_sessions: e.noProgress, best: e.best, current: e.current, unit: e.unit, trend_4w: e.trend4, trend_8w: e.trend8 })),
       exercises: r.exercises.map(e => ({ exercise: e.exercise, sessions: e.sessions, best: e.best, current: e.current, unit: e.unit, last: d10(e.lastDate), trend_4w: e.trend4, trend_8w: e.trend8, no_progress_sessions: e.noProgress, disabled: e.disabled })),
       attendance: r.attendance, measurements_due: r.measurements.due };
   }));
@@ -182,18 +190,20 @@ export function register(server) {
   /* ------------------------------------------------------------ ecriture */
   server.registerTool("update_program", {
     title: "Modifier le programme",
-    description: "Modifie le programme. action = 'update_exercise' (patch : type, range [min,max], sets, inc, unit, gear, rest, label, cue) ; 'add_exercise' (exercise, session, definition si nouveau : {type, unit, inc, gear, cue}, after optionnel) ; 'remove_exercise' (exercise, session) ; 'replace_exercise' (session, exercise = ancien, new_exercise, definition si nouveau) ; 'set_rotation' (rotation = liste d'identifiants de seances). L'historique reste rattache au nom interne de chaque exercice.",
+    description: "Modifie le programme. action = 'update_exercise' (patch : type, range [min,max], sets (max 5), inc, unit, gear, rest, label, cue, variant, anchor) ; 'add_exercise' (exercise, session, definition si nouveau : {type, unit, inc, gear, cue}, after optionnel) ; 'remove_exercise' (exercise, session) ; 'replace_exercise' (session, exercise = ancien, new_exercise, definition si nouveau) ; 'set_rotation' (rotation = liste d'identifiants de seances du profil actif) ; 'set_profile' (profile = 'salle' ou 'maison' : bascule materiel, rotation et exercices) ; 'update_profile' (profile, plates = {dumbbell:[...], bands:[...], bar, machine_lb}). L'historique reste rattache au nom interne de chaque exercice.",
     inputSchema: z.object({
-      action: z.enum(["update_exercise", "add_exercise", "remove_exercise", "replace_exercise", "set_rotation"]),
+      action: z.enum(["update_exercise", "add_exercise", "remove_exercise", "replace_exercise", "set_rotation", "set_profile", "update_profile"]),
       exercise: z.string().optional().describe("Nom interne de l'exercice concerne"),
       session: z.string().optional().describe("Identifiant de seance : ha, ba, hb, bb"),
       patch: z.object({ type: z.enum(["compound", "isolation", "lateral", "core"]).optional(), range: z.array(z.number().int().positive()).length(2).optional(),
-        sets: z.number().int().min(1).max(8).optional(), inc: z.number().min(0).optional(), unit: z.enum(["kg", "lb"]).optional(),
-        gear: z.enum(["dumbbell", "bar", "machine", "body"]).optional(), rest: z.number().int().min(0).max(600).optional(),
-        label: z.string().optional(), cue: z.string().optional() }).optional(),
+        sets: z.number().int().min(1).max(5).optional(), inc: z.number().min(0).optional(), unit: z.enum(["kg", "lb"]).optional(),
+        gear: z.enum(["dumbbell", "bar", "machine", "band", "straps", "body"]).optional(), rest: z.number().int().min(0).max(600).optional(),
+        label: z.string().optional(), cue: z.string().optional(), variant: z.string().nullable().optional(), anchor: z.string().nullable().optional() }).optional(),
+      profile: z.enum(["salle", "maison"]).optional(),
+      plates: z.object({ dumbbell: z.array(z.number()).optional(), bands: z.array(z.number()).optional(), bar: z.number().optional(), machine_lb: z.number().optional() }).optional(),
       new_exercise: z.string().optional(),
       definition: z.object({ type: z.enum(["compound", "isolation", "lateral", "core"]), unit: z.enum(["kg", "lb"]).optional(), inc: z.number().min(0).optional(),
-        gear: z.enum(["dumbbell", "bar", "machine", "body"]).optional(), cue: z.string().optional(), label: z.string().optional() }).optional(),
+        gear: z.enum(["dumbbell", "bar", "machine", "band", "straps", "body"]).optional(), cue: z.string().optional(), label: z.string().optional() }).optional(),
       after: z.string().optional().describe("Pour add_exercise : nom de l'exercice apres lequel inserer"),
       rotation: z.array(z.string()).optional()
     }),
@@ -221,7 +231,9 @@ export function register(server) {
           C.replaceExercise(state, a.session, a.exercise, a.new_exercise, a.definition ? { gear: "machine", unit: "kg", inc: 2.5, ...a.definition } : null);
           return { session: a.session, exercises: C.sessionExercises(state, a.session, { includeDisabled: true }).map(x => x.ex.n) };
         }
-        case "set_rotation": return { rotation: C.setRotation(state, a.rotation || []) };
+        case "set_rotation": return { profile: state.activeProfile, rotation: C.setRotation(state, a.rotation || []) };
+        case "set_profile": { if (!a.profile) throw new Error("profile requis"); C.setActiveProfile(state, a.profile); return { active_profile: a.profile, rotation: C.rotation(state), next_session: C.nextSession(state) }; }
+        case "update_profile": { if (!a.profile || !a.plates) throw new Error("profile et plates requis"); return { profile: a.profile, plates: C.updateProfile(state, a.profile, a.plates) }; }
       }
       throw new Error("action inconnue");
     });

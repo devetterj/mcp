@@ -5,7 +5,7 @@
    modification des donnees passe par ces fonctions.
    ============================================================ */
 
-export const VERSION = 4;
+export const VERSION = 5;
 
 /* fourchettes et repos par type d'exercice (modifiables par exercice) */
 export const TYPES = {
@@ -22,18 +22,47 @@ export const SETTINGS = {
   timeStep: 5,        /* secondes ajoutees sur les exercices chronometres */
 };
 
-/* charges reellement disponibles : l'arrondi tombe toujours dessus */
-export const PLATES = {
-  dumbbell: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17.5, 20, 22.5],
-  bar: 2.5,          /* barres, Smith, presse : pas de 2,5 kg */
-  machine_lb: 10,    /* colonnes de poids des machines : pas de 10 lb */
+/* materiel par profil : l'arrondi tombe toujours sur une charge qui existe.
+   Halteres en kg, barres/presse par pas, machines par pas (lb), elastiques
+   en kg par combinaison (30 + 20 = 50). */
+export const DEFAULT_PROFILES = {
+  salle:  { label: "Salle",  dumbbell: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17.5, 20, 22.5], bar: 2.5, machine_lb: 10, bands: [] },
+  maison: { label: "Maison", dumbbell: [2, 4.5, 7, 9.5, 12, 14.5, 17, 20], bar: 2.5, machine_lb: 10, bands: [10, 20, 30, 40, 50, 60] },
 };
+export const PLATES = DEFAULT_PROFILES.salle;
+/* variantes proposees quand la charge est au plafond, dans cet ordre */
+export const VARIANTS = ["tempo 4s", "pause 2s", "unilateral", "serie+"];
+export const MAX_SETS = 5;
 
 const E = (type, unit, inc, gear, extra = {}) => ({ type, unit, inc, gear, ...extra });
 
 export const DEFAULT_PROGRAM = {
   rotation: ["ha", "ba", "hb", "bb"],
+  rotations: { salle: ["ha", "ba", "hb", "bb"], maison: ["mha", "mb", "mhb"] },
   sessions: [
+    { id:"mha", name:"Maison — Haut A (poussee)", min:60, profile:"maison",
+      warm:"3 min corde a sauter ou montees de genoux + rotations d'epaules + face pull elastique 10 kg x 15 + 1 serie legere de developpe incline.",
+      blocks:[
+        { code:"A", ex:["Developpe incline halteres (maison)", "Rowing haltere un bras appui banc (maison)"] },
+        { code:"B", ex:["Extension triceps overhead haltere (maison)", "Tirage vertical elastique a genoux (maison)"] },
+        { code:"C", ex:["Developpe epaules assis halteres (maison)", "Elevations laterales halteres (maison)"] },
+        { code:"D", ex:["Planche (maison)"] },
+      ] },
+    { id:"mb", name:"Maison — Bas", min:60, profile:"maison",
+      warm:"3 min marche rapide ou montees de genoux + cat-cow x 10 + bird dog x 8 par cote + 15 squats a vide + 10 fentes a vide par jambe. Apres la planche laterale : bird dog 2 x 10 par cote, non logue.",
+      blocks:[
+        { code:"A", ex:["Fentes bulgares (maison)"] },
+        { code:"B", ex:["Hip thrust au banc (maison)", "Goblet squat (maison)", "Mollets debout une jambe (maison)"] },
+        { code:"C", ex:["Leg curl aux sangles (maison)", "Planche laterale (maison)"] },
+      ] },
+    { id:"mhb", name:"Maison — Haut B (tirage)", min:60, profile:"maison",
+      warm:"3 min corde a sauter ou montees de genoux + rotations d'epaules + face pull elastique 10 kg x 15 + 1 serie legere de developpe couche.",
+      blocks:[
+        { code:"A", ex:["Developpe couche halteres (maison)", "Rowing inverse aux sangles (maison)"] },
+        { code:"B", ex:["Ecarte incline halteres (maison)", "Curl marteau halteres (maison)"] },
+        { code:"C", ex:["Tirage horizontal elastique assis (maison)", "Face pull elastique (maison)"] },
+        { code:"D", ex:["Pompes pieds sureleves (maison)"] },
+      ] },
     { id:"ha", name:"Haut du corps A", min:60,
       warm:"5 min rameur ou velo + rotations d'epaules + 2 series legeres de developpe incline.",
       blocks:[
@@ -94,6 +123,28 @@ export const DEFAULT_PROGRAM = {
     "Fentes fendues haltere":           E("compound",  "kg", 2.5, "dumbbell", { pdc:true, r:[8, 12], u:"/ jambe", cue:"Descente verticale. Commence par ta jambe faible. Pied arriere sur le banc = version bulgare." }),
     "Leg curl assis":                   E("isolation", "lb", 10,  "machine",  { cue:"Etirement plus fort des ischios qu'allonge." }),
     "Mollets assis":                    E("isolation", "lb", 10,  "machine",  { cue:"Amplitude complete, tempo lent." }),
+
+    /* ---- profil Maison : halteres reglables 2 x 20 kg, banc, elastiques, sangles ---- */
+    "Developpe incline halteres (maison)":        E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Developpe incline halteres", img:"developpe-incline-haltere", s:4, r:[8,15], rest:120, start:20, cue:"Banc a 30 deg, descente 3 s, coudes a 45 deg. Deja au plafond de charge : vise 15 reps, puis les variantes." }),
+    "Developpe epaules assis halteres (maison)":  E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Developpe epaules assis halteres", s:3, r:[8,12], rest:120, start:12, cue:"Dossier vertical, dos plaque, ne cambre pas." }),
+    "Tirage vertical elastique a genoux (maison)":E("compound",  "kg", 10,  "band",     { profile:"maison", label:"Tirage vertical elastique a genoux", anchor:"haut", s:3, r:[10,15], rest:120, start:50, cue:"A genoux, elastique a l'ancrage haut. Tire vers le haut de la poitrine, coudes vers les hanches." }),
+    "Rowing haltere un bras appui banc (maison)": E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Rowing haltere un bras, appui banc", img:"rowing-haltere-unilateral", s:3, r:[10,15], rest:120, start:20, cue:"Genou et main sur le banc, dos plat : l'appui protege les lombaires. Tire vers la hanche." }),
+    "Elevations laterales halteres (maison)":     E("lateral",   "kg", 1,   "dumbbell", { profile:"maison", label:"Elevations laterales halteres", img:"elevations-laterales-haltere-assis", s:3, r:[12,20], rest:90, start:8, cue:"Sans elan. Variante : elastique 10 kg sous les pieds." }),
+    "Extension triceps overhead haltere (maison)":E("isolation", "kg", 2.5, "dumbbell", { profile:"maison", label:"Extension triceps overhead haltere", s:3, r:[10,15], rest:90, start:17, single:true, cue:"Assis, un haltere tenu a deux mains, coudes serres, dos contre le dossier." }),
+    "Planche (maison)":                           E("core",      "kg", 0,   "body",     { profile:"maison", label:"Planche", img:"planche", r:[45,60], u:"s", rest:60, cue:"Coudes sous les epaules, bassin rentre, dos plat. +5 s quand les 3 series sont tenues." }),
+    "Fentes bulgares (maison)":                   E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Fentes bulgares", s:4, r:[8,12], rest:120, start:12, u:"/ jambe", cue:"Pied arriere sur le banc, un haltere par main, buste droit, descente lente. L'exercice principal des jambes." }),
+    "Hip thrust au banc (maison)":                E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Hip thrust au banc", img:"hip-thrust", s:4, r:[12,20], rest:120, start:20, single:true, cue:"Epaules sur le banc, haltere sur le bassin. Serre les fessiers 1 s en haut, menton rentre, pas de cambrure." }),
+    "Goblet squat (maison)":                      E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Goblet squat", s:3, r:[12,20], rest:120, start:20, single:true, cue:"Un haltere contre la poitrine, talons au sol, buste droit. Variante : pause 2 s en bas." }),
+    "Leg curl aux sangles (maison)":              E("isolation", "kg", 0,   "straps",   { profile:"maison", label:"Leg curl aux sangles", s:3, r:[10,15], rest:90, pdc:true, free:true, cue:"Allonge sur le dos, talons dans les poignees, bassin decolle pendant tout l'exercice." }),
+    "Mollets debout une jambe (maison)":          E("isolation", "kg", 2.5, "dumbbell", { profile:"maison", label:"Mollets debout une jambe", s:3, r:[15,20], rest:90, start:20, u:"/ jambe", single:true, cue:"Sur une marche, l'haltere dans la main du cote travaille. Pause 1 s en haut, descente complete." }),
+    "Planche laterale (maison)":                  E("core",      "kg", 0,   "body",     { profile:"maison", label:"Planche laterale", img:"planche-laterale", r:[30,45], u:"s / cote", rest:60, cue:"Coude sous l'epaule, hanche haute, corps aligne. Puis bird dog 2 x 10 par cote." }),
+    "Developpe couche halteres (maison)":         E("compound",  "kg", 2.5, "dumbbell", { profile:"maison", label:"Developpe couche halteres", img:"developpe-couche-haltere", s:4, r:[10,15], rest:120, start:20, cue:"Banc plat. Au plafond des le depart : descente 3 s, pause 1 s en bas." }),
+    "Rowing inverse aux sangles (maison)":        E("compound",  "kg", 0,   "straps",   { profile:"maison", label:"Rowing inverse aux sangles", s:4, r:[8,15], rest:120, pdc:true, free:true, cue:"Corps tendu a 45 deg, tire la poitrine vers les poignees. Progression : angle plus bas, puis pieds sur le banc, puis sac leste." }),
+    "Ecarte incline halteres (maison)":           E("isolation", "kg", 2.5, "dumbbell", { profile:"maison", label:"Ecarte incline halteres", img:"ecarte-haltere-banc-incline", s:3, r:[12,15], rest:90, start:14.5, cue:"Coudes legerement flechis et fixes, etirement controle." }),
+    "Tirage horizontal elastique assis (maison)": E("compound",  "kg", 10,  "band",     { profile:"maison", label:"Tirage horizontal elastique assis", anchor:"bas", s:3, r:[12,15], rest:120, start:30, cue:"Assis au sol, elastique a l'ancrage bas. Omoplates serrees, buste immobile." }),
+    "Face pull elastique (maison)":               E("isolation", "kg", 10,  "band",     { profile:"maison", label:"Face pull elastique", img:"face-pull", anchor:"visage", s:3, r:[15,20], rest:90, start:20, cue:"Elastique a hauteur du visage, tire vers le front, coudes hauts." }),
+    "Curl marteau halteres (maison)":             E("isolation", "kg", 2.5, "dumbbell", { profile:"maison", label:"Curl marteau halteres", s:3, r:[10,15], rest:90, start:12, cue:"Sans elan, dos contre un mur si besoin." }),
+    "Pompes pieds sureleves (maison)":            E("compound",  "kg", 0,   "body",     { profile:"maison", label:"Pompes pieds sureleves", s:2, r:[8,30], rest:120, pdc:true, free:true, cue:"Pieds sur le banc, corps gaine. Note le maximum de reps propres ; variante lestee plus tard." }),
   },
 };
 
@@ -114,10 +165,22 @@ export function migrate(raw) {
   if (s.draft === undefined || (s.draft && typeof s.draft !== "object")) s.draft = null;
   if (!s.program || !s.program.exercises) s.program = clone(DEFAULT_PROGRAM);
   if (!Array.isArray(s.program.rotation) || !s.program.rotation.length) s.program.rotation = clone(DEFAULT_PROGRAM.rotation);
+  /* v5 : profils de materiel, rotations multiples, programme Maison ajoute sans toucher au reste */
+  if (!s.profiles || typeof s.profiles !== "object") {
+    s.profiles = clone(DEFAULT_PROFILES);
+    if (s.plates) s.profiles.salle = { ...s.profiles.salle, ...clone(s.plates) };
+  }
+  for (const k of Object.keys(DEFAULT_PROFILES)) s.profiles[k] = { ...clone(DEFAULT_PROFILES[k]), ...(s.profiles[k] || {}) };
+  if (!s.activeProfile || !s.profiles[s.activeProfile]) s.activeProfile = "salle";
+  if (!s.program.rotations || typeof s.program.rotations !== "object") s.program.rotations = { salle: s.program.rotation.slice(), maison: clone(DEFAULT_PROGRAM.rotations.maison) };
+  for (const k of Object.keys(DEFAULT_PROGRAM.rotations)) if (!Array.isArray(s.program.rotations[k]) || !s.program.rotations[k].length) s.program.rotations[k] = clone(DEFAULT_PROGRAM.rotations[k]);
+  for (const sess of DEFAULT_PROGRAM.sessions) if (!s.program.sessions.some(x => x.id === sess.id)) s.program.sessions.push(clone(sess));
+  for (const [n, e] of Object.entries(DEFAULT_PROGRAM.exercises)) if (!s.program.exercises[n]) s.program.exercises[n] = clone(e);
+  s.plates = s.profiles[s.activeProfile];
   if (!Array.isArray(s.notes)) s.notes = [];
   if (!s.next_targets || typeof s.next_targets !== "object") s.next_targets = {};
   s.plates = { ...PLATES, ...(s.plates || {}) };
-  s.settings = { ...SETTINGS, ...(s.settings || {}) };
+  s.settings = { ...SETTINGS, variantOrder: VARIANTS.slice(), ...(s.settings || {}) };
   s.v = VERSION;
   return s;
 }
@@ -130,9 +193,34 @@ export function exercise(state, name) {
   const t = TYPES[e.type] || TYPES.isolation;
   const unit = state.ovr[name] || e.unit || "kg";
   return { ...t, ...e, n:name, label: e.label || name, unit, r: e.r || t.r, s: e.s || t.s, rest: e.rest || t.rest,
-           time: !!(e.time ?? t.time), pdc: !!(e.pdc ?? t.pdc), disabled: e.disabled || null };
+           time: !!(e.time ?? t.time), pdc: !!(e.pdc ?? t.pdc), disabled: e.disabled || null,
+           profile: e.profile || "salle", gear: e.gear || "machine", variant: e.variant || null, free: !!e.free,
+           img: e.img || null, anchor: e.anchor || null, start: e.start ?? null, single: !!e.single };
 }
-export const exercises = state => Object.keys(state.program.exercises).map(n => exercise(state, n));
+export const exercises = (state, profileId = null) => Object.keys(state.program.exercises).map(n => exercise(state, n)).filter(e => !profileId || e.profile === profileId);
+export const profile  = state => state.profiles[state.activeProfile] || state.profiles.salle;
+export const rotation = state => state.program.rotations[state.activeProfile] || state.program.rotation;
+export function setActiveProfile(state, id) {
+  if (!state.profiles[id]) throw new Error("profil inconnu : " + id);
+  state.activeProfile = id; state.plates = state.profiles[id];
+  return id;
+}
+export function updateProfile(state, id, patch) {
+  if (!state.profiles[id]) throw new Error("profil inconnu : " + id);
+  const p = state.profiles[id];
+  if (patch.dumbbell) p.dumbbell = patch.dumbbell.map(Number).filter(v => v > 0).sort((a, b) => a - b);
+  if (patch.bands) p.bands = patch.bands.map(Number).filter(v => v > 0).sort((a, b) => a - b);
+  if (patch.bar > 0) p.bar = Number(patch.bar);
+  if (patch.machine_lb > 0) p.machine_lb = Number(patch.machine_lb);
+  if (state.activeProfile === id) state.plates = p;
+  return p;
+}
+/* combinaison d'elastiques a monter pour une charge donnee (30 + 20 = 50) */
+export function bandCombo(state, w) {
+  const parts = []; let rest = w;
+  for (const b of [30, 20, 10]) if (rest >= b) { parts.push(b); rest -= b; }
+  return rest === 0 && parts.length ? parts.join(" + ") : String(w);
+}
 export const session   = (state, id) => state.program.sessions.find(s => s.id === id) || null;
 export const rMin = ex => ex.r[0];
 export const rMax = ex => ex.r[1];
@@ -149,11 +237,12 @@ export function sessionExercises(state, id, { includeDisabled = false } = {}) {
 export function updateExercise(state, name, patch) {
   const e = state.program.exercises[name];
   if (!e) throw new Error("exercice inconnu : " + name);
-  const allowed = ["type", "unit", "inc", "gear", "r", "s", "rest", "time", "pdc", "u", "cue", "label"];
+  const allowed = ["type", "unit", "inc", "gear", "r", "s", "rest", "time", "pdc", "u", "cue", "label", "variant", "anchor", "free", "start", "img"];
   for (const k of Object.keys(patch)) {
     if (!allowed.includes(k)) throw new Error("champ non modifiable : " + k);
     if (k === "r" && !(Array.isArray(patch.r) && patch.r.length === 2 && patch.r[0] > 0 && patch.r[1] >= patch.r[0])) throw new Error("fourchette invalide");
     if (k === "type" && !TYPES[patch.type]) throw new Error("type inconnu : " + patch.type);
+    if (k === "s" && !(patch.s >= 1 && patch.s <= MAX_SETS)) throw new Error("series : entre 1 et " + MAX_SETS);
     e[k] = patch[k];
   }
   return exercise(state, name);
@@ -207,44 +296,48 @@ export function replaceExercise(state, sessionId, oldName, newName, def = null) 
   b.ex[b.ex.indexOf(oldName)] = newName;
   return s;
 }
-export function setRotation(state, ids) {
+export function setRotation(state, ids, profileId = state.activeProfile) {
   if (!Array.isArray(ids) || !ids.length || ids.some(id => !session(state, id))) throw new Error("rotation invalide");
-  state.program.rotation = ids.slice();
-  return state.program.rotation;
+  state.program.rotations[profileId] = ids.slice();
+  if (profileId === "salle") state.program.rotation = ids.slice();
+  return state.program.rotations[profileId];
 }
 
 /* ------------------------------------------------------------ charges */
-/* arrondit a une charge qui existe vraiment a la salle */
+/* liste des charges possibles pour un exercice, ou null si pas de pas fixe */
+function loadList(state, ex) {
+  const p = profile(state);
+  if (ex.gear === "dumbbell" && p.dumbbell?.length) return p.dumbbell;
+  if (ex.gear === "band" && p.bands?.length) return p.bands;
+  return null;
+}
+const stepOf = (state, ex) => ex.unit === "lb" ? (profile(state).machine_lb || 10) : (profile(state).bar || ex.inc || 2.5);
+/* arrondit a une charge qui existe vraiment avec le materiel du profil */
 export function roundLoad(state, ex, w) {
-  if (ex.time) return 0;
-  if (ex.gear === "dumbbell" && state.plates.dumbbell?.length) {
-    const list = state.plates.dumbbell;
-    if (w <= 0) return 0;
-    return list.reduce((a, b) => Math.abs(b - w) < Math.abs(a - w) ? b : a);
-  }
-  const step = ex.unit === "lb" ? (state.plates.machine_lb || 10) : (state.plates.bar || ex.inc || 2.5);
-  return round1(Math.max(0, Math.round(w / step) * step));
+  if (ex.time || ex.gear === "straps" || ex.gear === "body") return 0;
+  const list = loadList(state, ex);
+  if (list) { if (w <= 0) return 0; return list.reduce((a, b) => Math.abs(b - w) < Math.abs(a - w) ? b : a); }
+  const st = stepOf(state, ex);
+  return round1(Math.max(0, Math.round(w / st) * st));
+}
+/* charge maximale disponible pour cet exercice (null = pas de plafond connu) */
+export function maxLoad(state, ex) {
+  const list = loadList(state, ex);
+  return list ? list[list.length - 1] : null;
 }
 /* premiere charge strictement superieure / inferieure disponible */
 export function higherLoad(state, ex, w) {
-  let v = roundLoad(state, ex, w + (ex.inc || 2.5));
-  if (v > w) return v;
-  if (ex.gear === "dumbbell" && state.plates.dumbbell?.length) {
-    const up = state.plates.dumbbell.filter(x => x > w);
-    return up.length ? up[0] : w;
-  }
-  const step = ex.unit === "lb" ? (state.plates.machine_lb || 10) : (state.plates.bar || ex.inc || 2.5);
-  return round1(w + step);
+  const list = loadList(state, ex);
+  if (list) { const up = list.filter(x => x > w); return up.length ? up[0] : w; }
+  const v = roundLoad(state, ex, w + (ex.inc || 2.5));
+  return v > w ? v : round1(w + stepOf(state, ex));
 }
 export function lowerLoad(state, ex, w, factor = 0.9) {
   let v = roundLoad(state, ex, w * factor);
   if (v < w) return v;
-  if (ex.gear === "dumbbell" && state.plates.dumbbell?.length) {
-    const dn = state.plates.dumbbell.filter(x => x < w);
-    return dn.length ? dn[dn.length - 1] : 0;
-  }
-  const step = ex.unit === "lb" ? (state.plates.machine_lb || 10) : (state.plates.bar || ex.inc || 2.5);
-  return round1(Math.max(0, w - step));
+  const list = loadList(state, ex);
+  if (list) { const dn = list.filter(x => x < w); return dn.length ? dn[dn.length - 1] : 0; }
+  return round1(Math.max(0, w - stepOf(state, ex)));
 }
 
 /* ------------------------------------------------------------ historique */
@@ -265,9 +358,9 @@ export function perfs(state, name) {
     if (!all || !all.length) continue;
     const sets = validSets(ex, all);
     if (!sets.length) continue;
-    const work = workSets(ex, sets).map(x => Number(x.r));
+    const ws = workSets(ex, sets), work = ws.map(x => Number(x.r));
     out.push({ date: state.HIST[i].date, session: state.HIST[i].id, top: ex.time ? 0 : topW(sets), work, all,
-               vol: work.reduce((a, b) => a + b, 0) });
+               variant: (ws.find(x => x.v) || {}).v || "", vol: work.reduce((a, b) => a + b, 0) });
   }
   return out;
 }
@@ -299,32 +392,41 @@ export function nextPlan(state, ex, work) {
 export function suggest(state, name, now = Date.now()) {
   const ex = exercise(state, name);
   if (!ex) throw new Error("exercice inconnu : " + name);
+  const variant = ex.variant || "";
   const t = state.next_targets[name];
-  if (t) return { kind:"target", w: ex.time ? 0 : Number(t.w), plan: t.reps ? t.reps.slice(0, ex.s) : Array.from({ length: ex.s }, () => rMin(ex)), author: t.author || null, date: t.date || null };
+  if (t) return { kind:"target", w: ex.time ? 0 : Number(t.w), variant, plan: t.reps ? t.reps.slice(0, ex.s) : Array.from({ length: ex.s }, () => rMin(ex)), author: t.author || null, date: t.date || null };
 
   const hist = perfs(state, name);
-  if (!hist.length) return { kind:"first", w: isBW(ex) ? 0 : null, plan: nextPlan(state, ex, []) };
+  const mn = rMin(ex), mx = rMax(ex), s = ex.s;
+  if (!hist.length) return { kind:"first", w: isBW(ex) ? 0 : (ex.start != null ? roundLoad(state, ex, ex.start) : null), variant, plan: nextPlan(state, ex, []) };
   const last = hist[0];
   const days = Math.floor((now - new Date(last.date).getTime()) / DAY);
-  const s = ex.s, mn = rMin(ex), mx = rMax(ex);
   const complete = last.work.length >= s - 1;
   const allMax = complete && last.work.every(r => r >= mx);
   const allMin = complete && last.work.every(r => r >= mn);
-  const base = { from: last.top, date: last.date, last: last.work, days };
+  const base = { from: last.top, date: last.date, last: last.work, days, variant };
 
   if (ex.time) return { ...base, w:0, kind: allMax ? "timemax" : "time", plan: nextPlan(state, ex, last.work) };
 
   const w = last.top;
-  if (days > state.settings.rustyAfter) {
-    const f = days > state.settings.longRustyAfter ? 0.8 : 0.9;
-    return { ...base, w: lowerLoad(state, ex, w, f), kind:"rusty", plan: nextPlan(state, ex, []) };
+  if (days > state.settings.rustyAfter) return { ...base, w: lowerLoad(state, ex, w, days > state.settings.longRustyAfter ? 0.8 : 0.9), kind:"rusty", plan: nextPlan(state, ex, []) };
+  if (allMax) {
+    const next = higherLoad(state, ex, w);
+    if (!isBW(ex) && next > w) return { ...base, w: next, kind:"up", plan: nextPlan(state, ex, []) };
+    /* plafond de charge : on progresse par la variante */
+    if (ex.free) return { ...base, w, kind:"variantfree", plan: nextPlan(state, ex, []) };
+    const order = state.settings.variantOrder || VARIANTS;
+    const i = order.indexOf(variant);
+    const nextV = i === -1 ? order[0] : order[i + 1];
+    if (nextV && nextV !== "serie+") return { ...base, w, kind:"variant", next: nextV, plan: nextPlan(state, ex, []) };
+    if (s < MAX_SETS) return { ...base, w, kind:"setplus", sets: s + 1, plan: Array.from({ length: s + 1 }, () => mn) };
+    return { ...base, w, kind:"maxed", plan: nextPlan(state, ex, last.work) };
   }
-  if (allMax) return { ...base, w: higherLoad(state, ex, w), kind:"up", plan: nextPlan(state, ex, []) };
 
-  /* seances consecutives a cette charge sans progres du total de reps */
+  /* seances consecutives a cette charge et cette variante sans progres du total de reps */
   let st = 0;
-  for (let i = 0; i < hist.length && hist[i].top === w; i++) {
-    const older = hist[i + 1] && hist[i + 1].top === w ? hist[i + 1] : null;
+  for (let i = 0; i < hist.length && hist[i].top === w && hist[i].variant === last.variant; i++) {
+    const older = hist[i + 1] && hist[i + 1].top === w && hist[i + 1].variant === last.variant ? hist[i + 1] : null;
     if (older && hist[i].vol > older.vol) break;
     st++;
   }
@@ -338,10 +440,20 @@ export function suggest(state, name, now = Date.now()) {
 export function planSession(state, sessionId, now = Date.now()) {
   return sessionExercises(state, sessionId).map(({ block, ex }) => ({ block, ex, suggestion: suggest(state, ex.n, now), last: lastPerf(state, ex.n), notes: notes(state, { exercise: ex.n, session: sessionId }) }));
 }
+/* materiel a preparer pour une seance : charges d'halteres dans l'ordre
+   d'apparition, et combinaisons d'elastiques avec leur ancrage */
+export function sessionGear(state, sessionId, now = Date.now()) {
+  const dumbbells = [], bands = [];
+  for (const { ex, suggestion: g } of planSession(state, sessionId, now)) {
+    if (ex.gear === "dumbbell" && g.w > 0 && !dumbbells.includes(g.w)) dumbbells.push(g.w);
+    if (ex.gear === "band" && g.w > 0) bands.push({ exercise: ex.label, load: g.w, combo: bandCombo(state, g.w), anchor: ex.anchor });
+  }
+  return { dumbbells, bands };
+}
 
 /* ------------------------------------------------------------ rotation */
 export function nextSession(state) {
-  const rot = state.program.rotation;
+  const rot = rotation(state);
   if (!state.HIST.length) return rot[0];
   const last = state.HIST[state.HIST.length - 1].id;
   const i = rot.lastIndexOf(last);
@@ -356,13 +468,22 @@ export function recordSession(state, { id, date = new Date().toISOString(), bw =
   const clean = {};
   for (const [name, sets] of Object.entries(log)) {
     const keep = (sets || []).filter(x => x && x.r !== "" && x.r != null)
-      .map(x => ({ w: Number(x.w) || 0, r: Number(x.r) || 0, ok: x.ok !== false }));
+      .map(x => { const o = { w: Number(x.w) || 0, r: Number(x.r) || 0, ok: x.ok !== false }; if (x.v) o.v = String(x.v).trim(); return o; });
     if (keep.length) clean[name] = keep;
   }
   if (!Object.keys(clean).length) throw new Error("aucune serie a enregistrer");
   const entry = { id, date, bw: bw == null || bw === "" ? null : Number(bw), log: clean };
   state.HIST.push(entry);
-  for (const name of Object.keys(clean)) delete state.next_targets[name];
+  for (const name of Object.keys(clean)) {
+    delete state.next_targets[name];
+    /* la variante utilisee devient la variante courante ; une serie de plus reussie s'installe (max 5) */
+    const e = state.program.exercises[name]; if (!e) continue;
+    const ex = exercise(state, name), valid = validSets(ex, clean[name]), work = workSets(ex, valid);
+    if (!work.length) continue;
+    const v = (work.find(x => x.v) || {}).v;
+    if (v) e.variant = v; else if (e.variant) delete e.variant;
+    if (!ex.time && work.length === ex.s + 1 && work.length <= MAX_SETS && work.every(x => Number(x.r) >= rMin(ex))) e.s = work.length;
+  }
   return entry;
 }
 
@@ -424,9 +545,11 @@ function isoWeek(d) {
   const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
   return t.getUTCFullYear() + "-W" + String(Math.ceil(((t - y0) / DAY + 1) / 7)).padStart(2, "0");
 }
-export function report(state, now = Date.now(), { stagnantAfter = 4 } = {}) {
+export function report(state, now = Date.now(), { stagnantAfter = 4, profileId = state.activeProfile } = {}) {
   const perEx = [];
-  for (const ex of exercises(state)) {
+  const order = state.settings.variantOrder || VARIANTS;
+  const rank = v => { const i = order.indexOf(v || ""); return v ? (i === -1 ? 0.5 : i + 1) : 0; };
+  for (const ex of exercises(state, profileId)) {
     const h = perfs(state, ex.n);
     if (!h.length) continue;
     const val = p => ex.time ? Math.min(...p.work) : p.top;
@@ -439,11 +562,12 @@ export function report(state, now = Date.now(), { stagnantAfter = 4 } = {}) {
     for (let i = 0; i < h.length; i++) {
       const prevBest = Math.max(0, ...h.slice(i + 1).map(val));
       const prev = h[i + 1];
-      const better = val(h[i]) > prevBest || (prev && val(h[i]) === val(prev) && h[i].vol > prev.vol);
+      const harder = prev && val(h[i]) === val(prev) && h[i].variant !== prev.variant && (ex.free ? !!h[i].variant : rank(h[i].variant) > rank(prev.variant));
+      const better = val(h[i]) > prevBest || harder || (prev && val(h[i]) === val(prev) && h[i].variant === prev.variant && h[i].vol > prev.vol);
       if (better) break;
       noProgress++;
     }
-    perEx.push({ exercise: ex.n, unit: ex.time ? "s" : ex.unit, disabled: !!ex.disabled, sessions: h.length,
+    perEx.push({ exercise: ex.n, label: ex.label, variant: h[0].variant || null, unit: ex.time ? "s" : ex.unit, disabled: !!ex.disabled, sessions: h.length,
       best, current: cur, lastDate: h[0].date,
       trend4: t4 == null ? null : round1(cur - t4), trend8: t8 == null ? null : round1(cur - t8),
       noProgress, stagnant: noProgress >= stagnantAfter });
@@ -455,11 +579,11 @@ export function report(state, now = Date.now(), { stagnantAfter = 4 } = {}) {
   }
   const idx = Object.fromEntries(weeks.map((w, i) => [w.week, i]));
   for (const h of state.HIST) { const w = isoWeek(new Date(h.date)); if (w in idx) weeks[idx[w]].sessions++; }
-  return { exercises: perEx, stagnant: perEx.filter(e => e.stagnant && !e.disabled), attendance: weeks,
+  return { profile: profileId, exercises: perEx, stagnant: perEx.filter(e => e.stagnant && !e.disabled), attendance: weeks,
            bodyweight: bodyweight(state).slice(-12), measurements: measurementsDue(state, now) };
 }
 
 /* export complet, tel qu'il doit etre sauvegarde */
 export const exportAll = state => clone({ v: VERSION, ovr: state.ovr, HIST: state.HIST, MEAS: state.MEAS,
-  program: state.program, notes: state.notes, next_targets: state.next_targets, plates: state.plates, settings: state.settings,
-  draft: state.draft || null });
+  program: state.program, notes: state.notes, next_targets: state.next_targets, profiles: state.profiles, activeProfile: state.activeProfile,
+  plates: state.profiles[state.activeProfile], settings: state.settings, draft: state.draft || null });

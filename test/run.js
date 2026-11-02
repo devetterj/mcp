@@ -77,6 +77,13 @@ try {
     await assert.rejects(call("update_program", { action: "set_rotation", rotation: ["zz"] }), /invalide/);
     await assert.rejects(call("disable_exercise", { exercise: "Inconnu", reason: "x" }), /inconnu/);
   });
+  await check("profil Maison : bascule, plan avec materiel, retour Salle", async () => {
+    const r = await call("update_program", { action: "set_profile", profile: "maison" }); assert.equal(r.active_profile, "maison"); assert.equal(r.next_session, "mha");
+    const p = await call("get_program"); assert.equal(p.active_profile, "maison"); assert.equal(p.sessions.length, 3); assert.equal(p.sessions[0].exercises[0].max_load, 20);
+    const n = await call("get_next_plan"); assert.equal(n.session, "mha"); assert.deepEqual(n.gear.dumbbells, [20, 17, 12, 7]); assert.equal(n.exercises[0].weight, 20);
+    const u = await call("update_program", { action: "update_profile", profile: "maison", plates: { dumbbell: [2, 3.25, 4.5, 8, 20] } }); assert.deepEqual(u.plates.dumbbell, [2, 3.25, 4.5, 8, 20]);
+    const back = await call("update_program", { action: "set_profile", profile: "salle" }); assert.equal(back.next_session, "ba");
+  });
   await check("core.js identique a celui de l'app", async () => {
     const twin = new URL("../../core/core.js", import.meta.url);
     if (!existsSync(twin)) return;
