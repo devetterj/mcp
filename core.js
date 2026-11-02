@@ -27,7 +27,7 @@ export const SETTINGS = {
    en kg par combinaison (30 + 20 = 50). */
 export const DEFAULT_PROFILES = {
   salle:  { label: "Salle",  dumbbell: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17.5, 20, 22.5], bar: 2.5, machine_lb: 10, bands: [] },
-  maison: { label: "Maison", dumbbell: [2, 4.5, 7, 9.5, 12, 14.5, 17, 20], bar: 2.5, machine_lb: 10, bands: [10, 20, 30, 40, 50, 60] },
+  maison: { label: "Maison", dumbbell: [2, 4.5, 7, 9.5, 12, 14.5, 17, 19.5], bar: 2.5, machine_lb: 10, bands: [10, 20, 30, 40, 50, 60] },
 };
 export const PLATES = DEFAULT_PROFILES.salle;
 /* variantes proposees quand la charge est au plafond, dans cet ordre */
@@ -171,6 +171,8 @@ export function migrate(raw) {
     if (s.plates) s.profiles.salle = { ...s.profiles.salle, ...clone(s.plates) };
   }
   for (const k of Object.keys(DEFAULT_PROFILES)) s.profiles[k] = { ...clone(DEFAULT_PROFILES[k]), ...(s.profiles[k] || {}) };
+  /* la liste provisoire des halteres Maison (avant reception du colis) est remplacee par la liste reelle */
+  if (JSON.stringify(s.profiles.maison.dumbbell) === JSON.stringify([2, 4.5, 7, 9.5, 12, 14.5, 17, 20])) s.profiles.maison.dumbbell = clone(DEFAULT_PROFILES.maison.dumbbell);
   if (!s.activeProfile || !s.profiles[s.activeProfile]) s.activeProfile = "salle";
   if (!s.program.rotations || typeof s.program.rotations !== "object") s.program.rotations = { salle: s.program.rotation.slice(), maison: clone(DEFAULT_PROGRAM.rotations.maison) };
   for (const k of Object.keys(DEFAULT_PROGRAM.rotations)) if (!Array.isArray(s.program.rotations[k]) || !s.program.rotations[k].length) s.program.rotations[k] = clone(DEFAULT_PROGRAM.rotations[k]);
