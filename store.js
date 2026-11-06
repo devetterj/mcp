@@ -37,3 +37,11 @@ export async function modify(fn) {
   }
   throw last;
 }
+
+/* lien temporaire (1 h) vers une photo de bilan, signe par l'API */
+export async function signPhoto(id) {
+  const r = await fetch(API, { method: "POST", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify({ action: "photo_sign", id }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.message || j.error || ("http " + r.status));
+  return j.url;
+}

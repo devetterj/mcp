@@ -5,7 +5,7 @@
    modification des donnees passe par ces fonctions.
    ============================================================ */
 
-export const VERSION = 6;
+export const VERSION = 7;
 
 /* fourchettes et repos par type d'exercice (modifiables par exercice) */
 export const TYPES = {
@@ -14,6 +14,15 @@ export const TYPES = {
   lateral:   { r:[12, 20], s:3, rest:90 },
   core:      { r:[30, 60], s:3, rest:60, time:true, pdc:true },
 };
+
+/* trajectoire de poids cible par defaut (brief du 6 novembre 2026) */
+export const DEFAULT_WEIGHT_TARGET = [
+  { date: "2026-11-04", kg: 86.5 }, { date: "2026-12-01", kg: 85.0 }, { date: "2027-01-01", kg: 83.0 }, { date: "2027-02-01", kg: 81.0 },
+  { date: "2027-03-01", kg: 79.5 }, { date: "2027-04-01", kg: 78.0 }, { date: "2027-05-01", kg: 76.5 }, { date: "2027-06-01", kg: 75.5 },
+];
+export const WEIGH_CONDITIONS = ["matin", "salle"];   /* a jeun le matin / a la salle avant la seance */
+export const CHECKIN_VIEWS = ["face", "profil", "dos"];
+export const LIGHT_WEEK = { factor: 0.85, days: 7, minFatigued: 3 };
 
 export const SETTINGS = {
   deloadAfter: 2,     /* seances sans progres (avec une serie sous le min) avant -10 % */
@@ -198,6 +207,10 @@ export function migrate(raw) {
   if (!s.next_targets || typeof s.next_targets !== "object") s.next_targets = {};
   s.plates = { ...PLATES, ...(s.plates || {}) };
   s.settings = { ...SETTINGS, variantOrder: VARIANTS.slice(), ...(s.settings || {}) };
+  /* v7 : trajectoire de poids, pesees hors seance, photos de bilan, RIR, semaine allegee */
+  if (!Array.isArray(s.weightTarget) || !s.weightTarget.length) s.weightTarget = clone(DEFAULT_WEIGHT_TARGET);
+  if (!Array.isArray(s.weighins)) s.weighins = [];
+  if (s.lightWeek === undefined) s.lightWeek = null;
   s.v = VERSION;
   return s;
 }
@@ -387,7 +400,9 @@ export function perfs(state, name) {
     const sets = validSets(ex, all);
     if (!sets.length) continue;
     const ws = workSets(ex, sets), work = ws.map(x => Number(x.r));
-    out.push({ date: state.HIST[i].date, session: state.HIST[i].id, top: ex.time ? 0 : topW(sets), work, all,
+    const rir = ws.map(x => (x.rir == null || x.rir === "") ? null : Number(x.rir));
+    out.push({ date: state.HIST[i].date, session: state.HIST[i].id, top: ex.time ? 0 : topW(sets), work, all, rir,
+               avgRir: rir.length && rir.every(r => r != null) ? rir.reduce((a, b) => a + b, 0) / rir.length : null,
                variant: (ws.find(x => x.v) || {}).v || "", vol: work.reduce((a, b) => a + b, 0) });
   }
   return out;
@@ -417,7 +432,14 @@ export function nextPlan(state, ex, work) {
    short   : pas assez de series de travail la derniere fois
    reps    : toutes les series au moins au min -> meme charge, +1 rep
    hold    : une serie sous le min -> meme charge, le min partout */
-export function suggest(state, name, now = Date.now()) {
+export function suggest(state, name, now = Date.now(), { raw = false } = {}) {
+  const g = suggestRaw(state, name, now);
+  if (raw || g.kind === "target" || g.kind === "first" || !lightWeekActive(state, now)) return g;
+  const ex = exercise(state, name);
+  const sets = Math.max(1, g.plan.length - 1);
+  return { ...g, light: true, w: ex.time || !(g.w > 0) ? g.w : roundLoad(state, ex, g.w * LIGHT_WEEK.factor), plan: g.plan.slice(0, sets) };
+}
+function suggestRaw(state, name, now) {
   const ex = exercise(state, name);
   if (!ex) throw new Error("exercice inconnu : " + name);
   const variant = ex.variant || "";
@@ -432,7 +454,7 @@ export function suggest(state, name, now = Date.now()) {
   const complete = last.work.length >= s - 1;
   const allMax = complete && last.work.every(r => r >= mx);
   const allMin = complete && last.work.every(r => r >= mn);
-  const base = { from: last.top, date: last.date, last: last.work, days, variant };
+  const base = { from: last.top, date: last.date, last: last.work, days, variant, rir: last.rir, avgRir: last.avgRir };
 
   if (ex.time) return { ...base, w:0, kind: allMax ? "timemax" : "time", plan: nextPlan(state, ex, last.work) };
 
@@ -440,7 +462,14 @@ export function suggest(state, name, now = Date.now()) {
   if (days > state.settings.rustyAfter) return { ...base, w: lowerLoad(state, ex, w, days > state.settings.longRustyAfter ? 0.8 : 0.9), kind:"rusty", plan: nextPlan(state, ex, []) };
   if (allMax) {
     const next = higherLoad(state, ex, w);
-    if (!isBW(ex) && next > w) return { ...base, w: next, kind:"up", plan: nextPlan(state, ex, []) };
+    if (!isBW(ex) && next > w) {
+      /* reps en reserve >= 2 en moyenne : la charge etait trop legere, deux paliers si le materiel les a */
+      if (last.avgRir != null && last.avgRir >= 2) {
+        const next2 = higherLoad(state, ex, next);
+        if (next2 > next) return { ...base, w: next2, kind:"up2", plan: nextPlan(state, ex, []) };
+      }
+      return { ...base, w: next, kind:"up", plan: nextPlan(state, ex, []) };
+    }
     /* plafond de charge : on progresse par la variante */
     if (ex.free) return { ...base, w, kind:"variantfree", plan: nextPlan(state, ex, []) };
     const order = state.settings.variantOrder || VARIANTS;
@@ -459,9 +488,46 @@ export function suggest(state, name, now = Date.now()) {
     st++;
   }
   if (!complete) return { ...base, w, kind:"short", n: last.work.length, plan: nextPlan(state, ex, last.work) };
+  /* reps en baisse deux seances de suite avec zero reserve des la premiere serie :
+     fatigue probable, on garde la charge au lieu de la baisser */
+  if (isFatigued(hist)) return { ...base, w, kind:"fatigue", n: st, plan: nextPlan(state, ex, last.work) };
   if (allMin)    return { ...base, w, kind:"reps", n: st, plan: nextPlan(state, ex, last.work) };
   if (st >= state.settings.deloadAfter) return { ...base, w: lowerLoad(state, ex, w, 0.9), kind:"stall", n: st, plan: Array.from({ length: s }, () => mx) };
   return { ...base, w, kind:"hold", n: st, miss: last.work.filter(r => r < mn).length, plan: nextPlan(state, ex, last.work) };
+}
+function isFatigued(hist) {
+  if (hist.length < 2) return false;
+  const [a, b] = hist;
+  return a.top === b.top && a.variant === b.variant && a.vol < b.vol && a.rir[0] === 0 && b.rir[0] === 0;
+}
+/* date locale AAAA-MM-JJ (toISOString decalerait d'un jour selon le fuseau) */
+export const ymd = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+
+/* semaine allegee : proposee quand plusieurs exercices d'une meme seance sont
+   en fatigue ; acceptee, elle reduit charges et series pendant LIGHT_WEEK.days */
+export function lightWeekActive(state, now = Date.now()) {
+  const lw = state.lightWeek;
+  return !!(lw && lw.status === "acceptee" && lw.until && now < new Date(lw.until).getTime());
+}
+export function fatiguedExercises(state, sessionId, now = Date.now()) {
+  return sessionExercises(state, sessionId).filter(({ ex }) => suggest(state, ex.n, now, { raw: true }).kind === "fatigue").map(x => x.ex.n);
+}
+export function maybeProposeLightWeek(state, sessionId, now = Date.now()) {
+  const lw = state.lightWeek;
+  if (lw && (lw.status === "proposee" || lightWeekActive(state, now))) return null;
+  if (lw && lw.respondedAt && now - new Date(lw.respondedAt).getTime() < LIGHT_WEEK.days * DAY) return null;
+  const tired = fatiguedExercises(state, sessionId, now);
+  if (tired.length < LIGHT_WEEK.minFatigued) return null;
+  state.lightWeek = { proposedAt: new Date(now).toISOString(), session: sessionId, exercises: tired, status: "proposee" };
+  return state.lightWeek;
+}
+export function respondLightWeek(state, accept, now = Date.now()) {
+  const lw = state.lightWeek;
+  if (!lw || lw.status !== "proposee") throw new Error("aucune semaine allegee proposee");
+  lw.status = accept ? "acceptee" : "refusee";
+  lw.respondedAt = new Date(now).toISOString();
+  if (accept) lw.until = new Date(now + LIGHT_WEEK.days * DAY).toISOString();
+  return lw;
 }
 
 /* plan complet d'une seance : un objet par exercice actif */
@@ -508,7 +574,8 @@ export function recordSession(state, { id, date = new Date().toISOString(), bw =
   const clean = {};
   for (const [name, sets] of Object.entries(log)) {
     const keep = (sets || []).filter(x => x && x.r !== "" && x.r != null)
-      .map(x => { const o = { w: Number(x.w) || 0, r: Number(x.r) || 0, ok: x.ok !== false }; if (x.v) o.v = String(x.v).trim(); return o; });
+      .map(x => { const o = { w: Number(x.w) || 0, r: Number(x.r) || 0, ok: x.ok !== false }; if (x.v) o.v = String(x.v).trim();
+                  if (x.rir != null && x.rir !== "") o.rir = Math.min(3, Math.max(0, Math.round(Number(x.rir)) || 0)); return o; });
     if (keep.length) clean[name] = keep;
   }
   if (!Object.keys(clean).length) throw new Error("aucune serie a enregistrer");
@@ -524,6 +591,7 @@ export function recordSession(state, { id, date = new Date().toISOString(), bw =
     if (v) e.variant = v; else if (e.variant) delete e.variant;
     if (!ex.time && work.length === ex.s + 1 && work.length <= MAX_SETS && work.every(x => Number(x.r) >= rMin(ex))) e.s = work.length;
   }
+  maybeProposeLightWeek(state, id, new Date(date).getTime());
   return entry;
 }
 
@@ -560,16 +628,142 @@ export function removeNote(state, id) { state.notes = state.notes.filter(n => n.
 
 /* ------------------------------------------------------------ corps */
 export function bodyweight(state) {
-  const pts = [
-    ...state.MEAS.filter(m => m.bw).map(m => ({ d: m.date, v: Number(m.bw) })),
-    ...state.HIST.filter(h => h.bw).map(h => ({ d: h.date, v: Number(h.bw) })),
-  ].filter(p => p.v > 0).sort((a, b) => new Date(a.d) - new Date(b.d));
+  const pts = weighins(state).map(p => ({ d: p.date, v: p.kg }));
   return pts.map((p, i) => {
     const t = new Date(p.d).getTime();
     const win = pts.slice(0, i + 1).filter(q => t - new Date(q.d).getTime() < 7 * DAY);
     return { ...p, ma7: round1(win.reduce((a, q) => a + q.v, 0) / win.length) };
   });
 }
+/* pesee rapide hors seance */
+export function addWeighin(state, { kg, cond = "matin", date = new Date().toISOString() }) {
+  const v = Number(kg);
+  if (!(v > 20 && v < 300)) throw new Error("poids invalide");
+  if (!WEIGH_CONDITIONS.includes(cond)) throw new Error("condition inconnue : " + cond);
+  const w = { date, kg: round1(v), cond };
+  state.weighins.push(w); state.weighins.sort((a, b) => new Date(a.date) - new Date(b.date));
+  return w;
+}
+export function setWeightTarget(state, points) {
+  if (!Array.isArray(points) || !points.length) throw new Error("trajectoire vide");
+  const out = points.map(p => ({ date: String(p.date).slice(0, 10), kg: round1(Number(p.kg)) }));
+  if (out.some(p => !/^\d{4}-\d{2}-\d{2}$/.test(p.date) || isNaN(new Date(p.date).getTime()) || !(p.kg > 20 && p.kg < 300))) throw new Error("point invalide (date AAAA-MM-JJ et poids en kg)");
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  state.weightTarget = out;
+  return out;
+}
+/* cible interpolee lineairement, plate avant le premier point et apres le dernier */
+export function targetAt(state, date) {
+  const pts = state.weightTarget || [];
+  if (!pts.length) return null;
+  const t = new Date(date).getTime();
+  const ts = pts.map(p => ({ t: new Date(p.date).getTime(), kg: p.kg }));
+  if (t <= ts[0].t) return ts[0].kg;
+  if (t >= ts[ts.length - 1].t) return ts[ts.length - 1].kg;
+  for (let i = 1; i < ts.length; i++) if (t <= ts[i].t) {
+    const a = ts[i - 1], b = ts[i];
+    return Math.round((a.kg + (b.kg - a.kg) * (t - a.t) / (b.t - a.t)) * 100) / 100;
+  }
+  return null;
+}
+/* toutes les pesees avec leur condition : seances et mesures = a jeun le matin
+   (c'est la consigne de l'app), plus les pesees rapides */
+export function weighins(state) {
+  return [
+    ...state.MEAS.filter(m => m.bw).map(m => ({ date: m.date, kg: Number(m.bw), cond: "matin", src: "mesure" })),
+    ...state.HIST.filter(h => h.bw).map(h => ({ date: h.date, kg: Number(h.bw), cond: "matin", src: "seance" })),
+    ...(state.weighins || []).map(w => ({ date: w.date, kg: Number(w.kg), cond: w.cond || "matin", src: "pesee" })),
+  ].filter(p => p.kg > 0).sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+/* tendance : moyenne 7 jours sur des pesees comparables (le matin si on en a
+   assez, sinon toutes), cible a chaque date, ecart du jour, rythme sur 4 semaines */
+export function weightTrend(state, weeks = 12, now = Date.now()) {
+  const all = weighins(state);
+  const recentMorning = all.filter(p => p.cond === "matin" && now - new Date(p.date).getTime() <= 28 * DAY).length;
+  const basis = recentMorning >= 3 ? "matin" : "toutes";
+  const used = basis === "matin" ? all.filter(p => p.cond === "matin") : all;
+  const withMa = used.map((p, i) => {
+    const t = new Date(p.date).getTime();
+    const win = used.slice(0, i + 1).filter(q => t - new Date(q.date).getTime() < 7 * DAY);
+    return { ...p, ma7: round1(win.reduce((a, q) => a + q.kg, 0) / win.length), target: targetAt(state, p.date) };
+  });
+  const points = withMa.filter(p => now - new Date(p.date).getTime() <= weeks * 7 * DAY);
+  const latest = withMa[withMa.length - 1] || null;
+  const targetToday = targetAt(state, new Date(now).toISOString());
+  const gap = latest && targetToday != null ? round1(latest.ma7 - targetToday) : null;
+  /* rythme : pente des pesees des 28 derniers jours (kg par semaine) */
+  const r = used.filter(p => now - new Date(p.date).getTime() <= 28 * DAY);
+  let rate = null;
+  if (r.length >= 2) {
+    const xs = r.map(p => new Date(p.date).getTime() / DAY), ys = r.map(p => p.kg);
+    const mx = xs.reduce((a, b) => a + b, 0) / xs.length, my = ys.reduce((a, b) => a + b, 0) / ys.length;
+    const den = xs.reduce((a, x) => a + (x - mx) ** 2, 0);
+    rate = den ? round1((xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / den) * 7 * 100) / 100 : null;
+  }
+  /* alerte : plus d'un kilo au-dessus de la cible, sans interruption, depuis 14 jours */
+  const last14 = withMa.filter(p => now - new Date(p.date).getTime() <= 14 * DAY);
+  const alert = last14.length >= 2 && last14.every(p => p.target != null && p.ma7 - p.target > 1) &&
+                now - new Date(last14[0].date).getTime() >= 13 * DAY;
+  return { basis, points, current: latest ? latest.ma7 : null, latestDate: latest ? latest.date : null, targetToday, gap,
+           status: gap == null ? null : gap <= 0 ? "avance" : "retard", rate4w: rate, alert, target: state.weightTarget };
+}
+
+/* ---- bilans mensuels : MEAS + photos ---- */
+export function lastSaturday(year, month /* 0-11 */) {
+  const d = new Date(year, month + 1, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 1) % 7));
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+/* rappel a partir du dernier samedi du mois, tant que le bilan du mois n'est pas fait
+   (et encore deux semaines apres, si le mois precedent a ete oublie) */
+export function checkinDue(state, now = Date.now()) {
+  const d = new Date(now);
+  const cur = lastSaturday(d.getFullYear(), d.getMonth());
+  const prev = lastSaturday(d.getFullYear(), d.getMonth() - 1);
+  const since = now >= cur.getTime() ? cur : prev;
+  /* aucun bilan enregistre : le premier est du tout de suite, il sert de point de depart */
+  if (!state.MEAS.length) return { due: true, first: true, since: ymd(since) };
+  if (since === prev && now - prev.getTime() > 14 * DAY) return { due: false, since: null };
+  const done = state.MEAS.some(m => new Date(m.date).getTime() >= since.getTime());
+  return { due: !done, since: ymd(since) };
+}
+export function checkins(state) {
+  const list = state.MEAS.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+  const num = v => (v === "" || v == null) ? null : Number(v);
+  return list.map((m, i) => {
+    const prev = list[i - 1];
+    const fields = ["bw", "waist", "arm", "chest", "thigh"];
+    const delta = {};
+    if (prev) for (const f of fields) { const a = num(m[f]), b = num(prev[f]); delta[f] = a != null && b != null ? round1(a - b) : null; }
+    return { date: m.date, bw: num(m.bw), waist: num(m.waist), arm: num(m.arm), chest: num(m.chest), thigh: num(m.thigh),
+             photos: m.photos || null, delta: prev ? delta : null };
+  });
+}
+export function addCheckin(state, { date = new Date().toISOString(), bw, waist, arm, chest, thigh, photos = null }) {
+  const vals = { bw, waist, arm, chest, thigh };
+  const rec = { date };
+  for (const [k, v] of Object.entries(vals)) if (v !== "" && v != null && !isNaN(Number(v))) rec[k] = String(round1(Number(v)));
+  if (photos) rec.photos = Object.fromEntries(CHECKIN_VIEWS.filter(v => photos[v]).map(v => [v, String(photos[v])]));
+  if (Object.keys(rec).length === 1) throw new Error("bilan vide");
+  state.MEAS.push(rec);
+  state.MEAS.sort((a, b) => new Date(a.date) - new Date(b.date));
+  return rec;
+}
+export function setCheckinPhotos(state, date, photos) {
+  const m = state.MEAS.find(x => x.date === date);
+  if (!m) throw new Error("bilan introuvable : " + date);
+  m.photos = { ...(m.photos || {}), ...Object.fromEntries(CHECKIN_VIEWS.filter(v => photos[v]).map(v => [v, String(photos[v])])) };
+  return m;
+}
+export function compareCheckins(state, dateA, dateB) {
+  const all = checkins(state);
+  const a = all.find(x => x.date === dateA), b = all.find(x => x.date === dateB);
+  if (!a || !b) throw new Error("bilan introuvable");
+  const fields = ["bw", "waist", "arm", "chest", "thigh"];
+  return { a, b, delta: Object.fromEntries(fields.map(f => [f, a[f] != null && b[f] != null ? round1(b[f] - a[f]) : null])) };
+}
+
 export function measurementsDue(state, now = Date.now(), days = 30) {
   const last = state.MEAS.length ? state.MEAS[state.MEAS.length - 1].date : null;
   if (!last) return { due: true, days: null, last: null };
@@ -626,4 +820,5 @@ export function report(state, now = Date.now(), { stagnantAfter = 4, profileId =
 /* export complet, tel qu'il doit etre sauvegarde */
 export const exportAll = state => clone({ v: VERSION, ovr: state.ovr, HIST: state.HIST, MEAS: state.MEAS,
   program: state.program, notes: state.notes, next_targets: state.next_targets, profiles: state.profiles, activeProfile: state.activeProfile,
-  plates: state.profiles[state.activeProfile], settings: state.settings, draft: state.draft || null });
+  plates: state.profiles[state.activeProfile], settings: state.settings, draft: state.draft || null,
+  weightTarget: state.weightTarget, weighins: state.weighins, lightWeek: state.lightWeek || null });

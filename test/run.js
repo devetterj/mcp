@@ -19,6 +19,8 @@ C.recordSession(state, { id: "ba", date: day(7), bw: 87.2, log: { "Presse a cuis
 C.recordSession(state, { id: "hb", date: day(4), bw: 87.0, log: { "Developpe couche haltere": sets(40, [10, 10, 7]), "Face pull": sets(50, [15, 15, 15]), "Curl marteau a la corde": sets(80, [12, 12, 12]) } });
 C.recordSession(state, { id: "ha", date: day(2), bw: 86.9, log: { "Developpe incline haltere": sets(20, [10, 10, 10]), "Tirage vertical prise large": sets(140, [8, 8, 7]), "Curl poulie pupitre": sets(25, [10, 10, 9]) } });
 state.MEAS.push({ date: day(40), bw: "88", waist: "97" });
+state.MEAS.push({ date: day(10), bw: "87", waist: "96", photos: { face: "2026-11-28-face" } });
+C.addWeighin(state, { kg: 86.8, cond: "salle", date: day(1) });
 
 const API_TOKEN = "api-token-0123456789abcdef";
 const api = await startFakeApi(C.exportAll(state), API_TOKEN);
@@ -40,9 +42,9 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: "Bearer " + TOKEN } } }));
   const call = async (name, args = {}) => { const r = await client.callTool({ name, arguments: args }); const text = r.content[0].text; if (r.isError) throw new Error(text); return JSON.parse(text); };
 
-  await check("liste des 16 outils", async () => {
+  await check("liste des 20 outils", async () => {
     const names = (await client.listTools()).tools.map(t => t.name).sort();
-    assert.deepEqual(names, ["add_note", "clear_next_targets", "disable_exercise", "enable_exercise", "get_bodyweight", "get_history", "get_last_session", "get_measurements", "get_next_plan", "get_notes", "get_program", "get_stagnation_report", "search_exercise_images", "set_exercise_image", "set_next_targets", "update_program"]);
+    assert.deepEqual(names, ["add_note", "clear_next_targets", "disable_exercise", "enable_exercise", "get_bodyweight", "get_checkin_photos", "get_checkins", "get_history", "get_last_session", "get_measurements", "get_next_plan", "get_notes", "get_program", "get_stagnation_report", "get_weight_trend", "search_exercise_images", "set_exercise_image", "set_next_targets", "set_weight_target", "update_program"]);
   });
   await check("get_program", async () => { const p = await call("get_program"); assert.equal(p.sessions.length, 4); assert.ok(["ba", "ha"].includes(p.next_session)); assert.ok(p.sessions[0].exercises[0].range); });
   await check("get_history resume + filtres", async () => {
@@ -52,8 +54,32 @@ try {
   });
   await check("get_last_session avec comparaison", async () => { const l = await call("get_last_session", { session: "ha" }); assert.equal(l.comparison["Tirage vertical prise large"].top_delta, 10); assert.equal(l.comparison["Developpe incline haltere"].reps_delta, 6); });
   await check("get_next_plan", async () => { const n = await call("get_next_plan", { session: "ha" }); const inc = n.exercises.find(e => e.name === "Developpe incline haltere"); assert.equal(inc.kind, "up"); assert.equal(inc.weight, 22.5); });
-  await check("get_bodyweight", async () => { const b = await call("get_bodyweight", { weeks: 4 }); assert.equal(b.points.length, 4); assert.equal(b.latest, 86.9); });
-  await check("get_measurements", async () => { const m = await call("get_measurements"); assert.equal(m.measurements.length, 1); assert.equal(m.reminder.due, true); });
+  await check("get_bodyweight", async () => { const b = await call("get_bodyweight", { weeks: 4 }); assert.equal(b.points.length, 6, "4 seances + 1 bilan + 1 pesee rapide"); assert.equal(b.latest, 86.8); });
+  await check("get_measurements", async () => { const m = await call("get_measurements"); assert.equal(m.measurements.length, 2); assert.equal(m.reminder.due, false); });
+  await check("get_weight_trend et set_weight_target", async () => {
+    const t = await call("get_weight_trend", { weeks: 8 });
+    assert.ok(t.points.length >= 5); assert.equal(typeof t.current_avg7, "number"); assert.equal(typeof t.target_today, "number");
+    assert.ok(t.points.some(p => p.cond === "salle" || t.basis === "matin"), "la condition est renvoyee ou filtree");
+    const r = await call("set_weight_target", { points: [{ date: "2027-01-01", kg: 80 }, { date: "2026-12-01", kg: 84 }] });
+    assert.deepEqual(r.target.map(p => p.kg), [84, 80]);
+    await assert.rejects(call("set_weight_target", { points: [{ date: "demain", kg: 80 }] }), /invalide/);
+  });
+  await check("get_checkins et get_checkin_photos (liens signes)", async () => {
+    const c = await call("get_checkins");
+    assert.equal(c.checkins.length, 2); assert.equal(c.checkins[1].delta.waist, -1); assert.deepEqual(c.checkins[1].photos, ["face"]);
+    const p = await call("get_checkin_photos", {});
+    assert.ok(p.photos.face.startsWith("http://photos.test/2026-11-28-face"));
+    await assert.rejects(call("get_checkin_photos", { date: "2020-01-01" }), /aucun bilan/);
+  });
+  await check("rir dans l'historique et dans la raison du plan", async () => {
+    const S2 = C.migrate(api.get().data);
+    C.recordSession(S2, { id: "hb", date: day(0), log: { "Face pull": [{ w: 50, r: 15, ok: true, rir: 3 }, { w: 50, r: 15, ok: true, rir: 2 }, { w: 50, r: 15, ok: true, rir: 2 }] } });
+    const cur = api.get(); await fetch(api.url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + API_TOKEN }, body: JSON.stringify({ data: C.exportAll(S2), base_rev: cur.rev }) });
+    const h = await call("get_history", { exercise: "Face pull", limit: 1 });
+    assert.deepEqual(h.sessions[0].exercises["Face pull"].rir, [3, 2, 2]); assert.equal(h.sessions[0].exercises["Face pull"].avg_rir, 2.3);
+    const n = await call("get_next_plan", { session: "hb" }); const fp = n.exercises.find(e => e.name === "Face pull");
+    assert.equal(fp.kind, "up2"); assert.ok(/reserve/.test(fp.reason)); assert.equal(fp.weight, 70);
+  });
   await check("get_stagnation_report", async () => { const r = await call("get_stagnation_report", { min_sessions: 1 }); assert.ok(r.attendance.length === 8); assert.ok(r.exercises.length >= 7); });
   await check("add_note puis get_notes", async () => {
     const n = await call("add_note", { text: "Dos plat", exercise: "Presse a cuisses" }); assert.equal(n.note.author, "claude");

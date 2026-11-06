@@ -9,6 +9,7 @@ export function startFakeApi(initialData, token) {
     if (req.method === "GET") return send(200, { rev, updated: new Date().toISOString(), data });
     let body = ""; req.on("data", c => body += c); req.on("end", () => {
       const j = JSON.parse(body || "{}");
+      if (j.action === "photo_sign") return j.id === "2026-11-28-face" ? send(200, { url: "http://photos.test/" + j.id + "?exp=1&sig=abc" }) : send(404, { error: "photo_introuvable" });
       if (j.base_rev != null && Number(j.base_rev) !== rev) return send(409, { error: "conflit_version", rev });
       rev++; data = j.data; send(200, { rev, updated: new Date().toISOString() });
     });

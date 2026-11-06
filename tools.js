@@ -2,7 +2,7 @@
    que l'app et que le futur coach, jamais un chemin parallele. */
 import { z } from "zod";
 import * as C from "./core.js";
-import { load, modify } from "./store.js";
+import { load, modify, signPhoto } from "./store.js";
 
 const DAY = 86400000;
 /* banque d'images (Free Exercise DB, domaine public) : index des exercices et
@@ -36,8 +36,11 @@ function summarize(state, h) {
     if (!valid.length) continue;
     const top = C.topW(valid), work = ex ? C.workSets(ex, valid) : valid;
     const best = work.reduce((a, x) => (x.r > (a ? a.r : -1) ? x : a), null);
+    const rirs = work.map(x => x.rir).filter(v => v != null);
     exercises[name] = { top: ex && ex.time ? null : top, best: best ? (ex && ex.time ? best.r + " s" : top + "x" + best.r) : null,
-      total_reps: work.reduce((a, x) => a + Number(x.r), 0), sets: valid.length, work_reps: work.map(x => Number(x.r)) };
+      total_reps: work.reduce((a, x) => a + Number(x.r), 0), sets: valid.length, work_reps: work.map(x => Number(x.r)),
+      rir: work.map(x => x.rir ?? null), avg_rir: rirs.length === work.length && work.length ? Math.round(rirs.reduce((a, b) => a + b, 0) / rirs.length * 10) / 10 : null,
+      variant: (work.find(x => x.v) || {}).v || null };
   }
   return { date: h.date, session: h.id, bodyweight: h.bw ?? null, exercises };
 }
@@ -56,7 +59,9 @@ function reason(ex, g) {
     case "target": return `cible imposee${g.author ? " par " + g.author : ""}`;
     case "first": return "jamais fait : charge de depart a choisir";
     case "rusty": return `${g.days} jours sans cet exercice : reprise en douceur (${g.from} -> ${g.w})`;
-    case "up": return `${ex.s}x${mx} reussi a ${g.from} : charge suivante`;
+    case "up": return `${ex.s}x${mx} reussi a ${g.from}${g.rir && g.rir.every(r => r != null) ? " (RIR " + g.rir.join("-") + ")" : ""} : charge suivante`;
+    case "up2": return `${ex.s}x${mx} reussi a ${g.from} avec ${g.avgRir.toFixed(1)} reps en reserve en moyenne : deux paliers d'un coup`;
+    case "fatigue": return `reps en baisse deux seances de suite avec zero reserve des la premiere serie : fatigue probable, on garde la charge au lieu de la baisser`;
     case "reps": return `toutes les series au moins a ${mn} : meme charge, +1 rep par serie non au max`;
     case "hold": return `${g.miss} serie(s) sous ${mn} : meme charge, viser ${mn} partout (${g.n} seance(s) sans progres)`;
     case "stall": return `${g.n} seances sans progres avec une serie sous ${mn} : charge reduite de 10 %`;
@@ -70,6 +75,7 @@ function reason(ex, g) {
   }
   return g.kind;
 }
+const withLight = (g, text) => g.light ? text + " ; semaine allegee active : charge a 85 % et une serie de moins" : text;
 
 export function register(server) {
   /* ------------------------------------------------------------ lecture */
@@ -86,7 +92,8 @@ export function register(server) {
       sessions: state.program.sessions.filter(s => (s.profile || "salle") === pid).map(s => ({ id: s.id, name: s.name, warmup: s.warm,
         exercises: C.sessionExercises(state, s.id, { includeDisabled: true }).map(({ block, ex }) => exerciseView(state, ex, block)) })),
       other_profile_sessions: state.program.sessions.filter(s => (s.profile || "salle") !== pid).map(s => ({ id: s.id, name: s.name, profile: s.profile || "salle" })),
-      settings: state.settings, types: C.TYPES };
+      settings: state.settings, types: C.TYPES,
+      light_week: state.lightWeek ? { ...state.lightWeek, active: C.lightWeekActive(state) } : null, weight_target: state.weightTarget };
   }));
 
   server.registerTool("get_history", {
@@ -155,7 +162,8 @@ export function register(server) {
         name: ex.n, label: ex.label, block, kind: g.kind, weight: ex.time ? null : g.w, plan_reps: g.plan, unit: ex.time ? "s" : ex.unit,
         variant: g.kind === "variant" ? g.next : (g.variant || null), gear: ex.gear, band_combo: ex.gear === "band" && g.w > 0 ? C.bandCombo(state, g.w) : null, anchor: ex.anchor,
         last: last ? { date: last.date, top: ex.time ? null : last.top, work_reps: last.work, all_sets: last.all.map(x => ({ w: x.w, r: x.r })) } : null,
-        reason: reason(ex, g), notes: C.notes(state, { exercise: ex.n, session: id }).map(n => ({ author: n.author, text: n.text })) })) };
+        light_week: !!g.light, rir_last: g.rir || null,
+        reason: withLight(g, reason(ex, g)), notes: C.notes(state, { exercise: ex.n, session: id }).map(n => ({ author: n.author, text: n.text })) })) };
   }));
 
   server.registerTool("get_bodyweight", {
@@ -167,6 +175,54 @@ export function register(server) {
     const { state } = await load();
     const pts = C.bodyweight(state).filter(p => Date.now() - new Date(p.d).getTime() <= weeks * 7 * DAY);
     return { weeks, points: pts.map(p => ({ date: d10(p.d), kg: p.v, avg7: p.ma7 })), latest: pts.length ? pts[pts.length - 1].v : null };
+  }));
+
+  server.registerTool("get_weight_trend", {
+    title: "Tendance de poids",
+    description: "Pesees (seances, bilans, pesees rapides) avec leur condition (matin a jeun / salle), moyenne glissante 7 jours calculee sur des pesees comparables, trajectoire cible interpolee a chaque date, ecart actuel a la cible (positif = en retard), rythme des 4 dernieres semaines en kg par semaine, et alerte si la moyenne depasse la cible de plus d'1 kg depuis 2 semaines.",
+    inputSchema: z.object({ weeks: z.number().int().min(1).max(104).optional().describe("Nombre de semaines de points renvoyes, 12 par defaut") }),
+    annotations: { readOnlyHint: true }
+  }, run(async ({ weeks = 12 }) => {
+    const { state } = await load();
+    const t = C.weightTrend(state, weeks);
+    return { basis: t.basis, current_avg7: t.current, latest_date: d10(t.latestDate), target_today: t.targetToday, gap_kg: t.gap, status: t.status,
+      rate_kg_per_week_4w: t.rate4w, alert_above_target: t.alert, target: t.target,
+      points: t.points.map(p => ({ date: d10(p.date), kg: p.kg, cond: p.cond, source: p.src, avg7: p.ma7, target: p.target })) };
+  }));
+
+  server.registerTool("set_weight_target", {
+    title: "Modifier la trajectoire de poids",
+    description: "Remplace la trajectoire de poids cible par une liste de points {date AAAA-MM-JJ, kg}. Entre deux points la cible est interpolee lineairement ; avant le premier et apres le dernier elle est constante.",
+    inputSchema: z.object({ points: z.array(z.object({ date: z.string(), kg: z.number() })).min(1) }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+  }, run(async ({ points }) => {
+    const { rev, result } = await modify(state => C.setWeightTarget(state, points));
+    return { rev, target: result };
+  }));
+
+  server.registerTool("get_checkins", {
+    title: "Bilans mensuels",
+    description: "Liste des bilans (poids, tour de taille, bras, poitrine, cuisse) avec les ecarts par rapport au bilan precedent, et les identifiants des photos (face, profil, dos) quand il y en a. Les photos elles-memes s'obtiennent avec get_checkin_photos. Indique aussi si un bilan est attendu (rappel a partir du dernier samedi du mois).",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true }
+  }, run(async () => {
+    const { state } = await load();
+    return { due: C.checkinDue(state), checkins: C.checkins(state).map(c => ({ ...c, date: c.date, photos: c.photos ? Object.keys(c.photos) : [] })) };
+  }));
+
+  server.registerTool("get_checkin_photos", {
+    title: "Photos d'un bilan",
+    description: "Renvoie, pour le bilan a la date donnee (ou le dernier bilan avec photos si date est omis), des liens temporaires (valables 1 heure) vers les photos face, profil et dos, pour les regarder ou les comparer a un autre bilan. Les photos sont privees : ne pas les copier ailleurs.",
+    inputSchema: z.object({ date: z.string().optional().describe("Date exacte du bilan telle que renvoyee par get_checkins") }),
+    annotations: { readOnlyHint: true }
+  }, run(async ({ date }) => {
+    const { state } = await load();
+    const all = C.checkins(state).filter(c => c.photos && Object.keys(c.photos).length);
+    const c = date ? all.find(x => x.date === date || x.date.slice(0, 10) === date.slice(0, 10)) : all[all.length - 1];
+    if (!c) throw new Error("aucun bilan avec photos" + (date ? " a cette date" : ""));
+    const photos = {};
+    for (const [view, id] of Object.entries(c.photos)) photos[view] = await signPhoto(id);
+    return { date: c.date, expires_in_minutes: 60, photos };
   }));
 
   server.registerTool("get_measurements", {
@@ -206,9 +262,9 @@ export function register(server) {
   /* ------------------------------------------------------------ ecriture */
   server.registerTool("update_program", {
     title: "Modifier le programme",
-    description: "Modifie le programme. action = 'update_exercise' (patch : type, range [min,max], sets (max 5), inc, unit, gear, rest, label, cue, variant, anchor) ; 'add_exercise' (exercise, session, definition si nouveau : {type, unit, inc, gear, cue}, after optionnel) ; 'remove_exercise' (exercise, session) ; 'replace_exercise' (session, exercise = ancien, new_exercise, definition si nouveau) ; 'set_rotation' (rotation = liste d'identifiants de seances du profil actif) ; 'set_profile' (profile = 'salle' ou 'maison' : bascule materiel, rotation et exercices) ; 'update_profile' (profile, plates = {dumbbell:[...], bands:[...], bar, machine_lb}). L'historique reste rattache au nom interne de chaque exercice.",
+    description: "Modifie le programme. action = 'light_week' (accept true/false : repond a la semaine allegee proposee, visible dans get_program) ; 'update_exercise' (patch : type, range [min,max], sets (max 5), inc, unit, gear, rest, label, cue, variant, anchor) ; 'add_exercise' (exercise, session, definition si nouveau : {type, unit, inc, gear, cue}, after optionnel) ; 'remove_exercise' (exercise, session) ; 'replace_exercise' (session, exercise = ancien, new_exercise, definition si nouveau) ; 'set_rotation' (rotation = liste d'identifiants de seances du profil actif) ; 'set_profile' (profile = 'salle' ou 'maison' : bascule materiel, rotation et exercices) ; 'update_profile' (profile, plates = {dumbbell:[...], bands:[...], bar, machine_lb}). L'historique reste rattache au nom interne de chaque exercice.",
     inputSchema: z.object({
-      action: z.enum(["update_exercise", "add_exercise", "remove_exercise", "replace_exercise", "set_rotation", "set_profile", "update_profile"]),
+      action: z.enum(["update_exercise", "add_exercise", "remove_exercise", "replace_exercise", "set_rotation", "set_profile", "update_profile", "light_week"]),
       exercise: z.string().optional().describe("Nom interne de l'exercice concerne"),
       session: z.string().optional().describe("Identifiant de seance : ha, ba, hb, bb"),
       patch: z.object({ type: z.enum(["compound", "isolation", "lateral", "core"]).optional(), range: z.array(z.number().int().positive()).length(2).optional(),
@@ -216,6 +272,7 @@ export function register(server) {
         gear: z.enum(["dumbbell", "bar", "machine", "band", "straps", "body"]).optional(), rest: z.number().int().min(0).max(600).optional(),
         label: z.string().optional(), cue: z.string().optional(), variant: z.string().nullable().optional(), anchor: z.string().nullable().optional() }).optional(),
       profile: z.enum(["salle", "maison"]).optional(),
+      accept: z.boolean().optional().describe("Pour light_week : true accepte la semaine allegee proposee, false la refuse"),
       plates: z.object({ dumbbell: z.array(z.number()).optional(), bands: z.array(z.number()).optional(), bar: z.number().optional(), machine_lb: z.number().optional() }).optional(),
       new_exercise: z.string().optional(),
       definition: z.object({ type: z.enum(["compound", "isolation", "lateral", "core"]), unit: z.enum(["kg", "lb"]).optional(), inc: z.number().min(0).optional(),
@@ -250,6 +307,7 @@ export function register(server) {
         case "set_rotation": return { profile: state.activeProfile, rotation: C.setRotation(state, a.rotation || []) };
         case "set_profile": { if (!a.profile) throw new Error("profile requis"); C.setActiveProfile(state, a.profile); return { active_profile: a.profile, rotation: C.rotation(state), next_session: C.nextSession(state) }; }
         case "update_profile": { if (!a.profile || !a.plates) throw new Error("profile et plates requis"); return { profile: a.profile, plates: C.updateProfile(state, a.profile, a.plates) }; }
+        case "light_week": { if (typeof a.accept !== "boolean") throw new Error("accept requis (true/false)"); return { light_week: C.respondLightWeek(state, a.accept) }; }
       }
       throw new Error("action inconnue");
     });
