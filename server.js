@@ -8,6 +8,10 @@ import { register } from "./tools.js";
 
 const TOKEN = process.env.MCP_TOKEN;
 if (!TOKEN || TOKEN.length < 16) { console.error("MCP_TOKEN manquant ou trop court (variable d'environnement)"); process.exit(1); }
+if (!/^https?:\/\//.test(process.env.CARNET_API || "") || (process.env.CARNET_API_TOKEN || "").length < 16) {
+  console.error("CARNET_API (URL de l'API du carnet) et CARNET_API_TOKEN (16 caracteres minimum) sont obligatoires");
+  process.exit(1);
+}
 const PORT = Number(process.env.PORT) || 3000;
 
 const handler = createMcpHandler(() => {

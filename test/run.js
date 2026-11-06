@@ -20,9 +20,10 @@ C.recordSession(state, { id: "hb", date: day(4), bw: 87.0, log: { "Developpe cou
 C.recordSession(state, { id: "ha", date: day(2), bw: 86.9, log: { "Developpe incline haltere": sets(20, [10, 10, 10]), "Tirage vertical prise large": sets(140, [8, 8, 7]), "Curl poulie pupitre": sets(25, [10, 10, 9]) } });
 state.MEAS.push({ date: day(40), bw: "88", waist: "97" });
 
-const api = await startFakeApi(C.exportAll(state));
+const API_TOKEN = "api-token-0123456789abcdef";
+const api = await startFakeApi(C.exportAll(state), API_TOKEN);
 const PORT = 18765 + Math.floor(Math.random() * 1000);
-const child = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT), MCP_TOKEN: TOKEN, CARNET_API: api.url }, stdio: ["ignore", "pipe", "inherit"] });
+const child = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT), MCP_TOKEN: TOKEN, CARNET_API: api.url, CARNET_API_TOKEN: API_TOKEN }, stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((res, rej) => { child.stdout.on("data", d => { if (String(d).includes("ecoute")) res(); }); child.on("exit", c => rej(new Error("serveur termine " + c))); });
 const base = `http://127.0.0.1:${PORT}`;
 let failures = 0;
@@ -83,6 +84,16 @@ try {
     const n = await call("get_next_plan"); assert.equal(n.session, "mha"); assert.deepEqual(n.gear.dumbbells, [19.5, 17, 12, 7]); assert.equal(n.exercises[0].weight, 19.5);
     const u = await call("update_program", { action: "update_profile", profile: "maison", plates: { dumbbell: [2, 3.25, 4.5, 8, 20] } }); assert.deepEqual(u.plates.dumbbell, [2, 3.25, 4.5, 8, 20]);
     const back = await call("update_program", { action: "set_profile", profile: "salle" }); assert.equal(back.next_session, "ba");
+  });
+  await check("sans CARNET_API_TOKEN le serveur refuse de demarrer", async () => {
+    const bad = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT + 1), MCP_TOKEN: TOKEN, CARNET_API: api.url, CARNET_API_TOKEN: "" }, stdio: "ignore" });
+    const code = await new Promise(r => bad.on("exit", r)); assert.equal(code, 1);
+  });
+  await check("aucune adresse d'API ni jeton dans le code source", async () => {
+    for (const f of ["store.js", "server.js", "tools.js", "README.md"]) {
+      const src = readFileSync(new URL("../" + f, import.meta.url), "utf8");
+      assert.ok(!/genius-strategy\.com\/api|api-k7m2|api-[0-9a-f]{10}\.php/.test(src), f + " contient une adresse d'API");
+    }
   });
   await check("core.js identique a celui de l'app", async () => {
     const twin = new URL("../../core/core.js", import.meta.url);

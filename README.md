@@ -7,17 +7,23 @@ plus anciens), protege par un jeton Bearer.
 
 - `server.js` : HTTP, authentification, protection Origin
 - `tools.js` : les 14 outils (lecture et ecriture), tous via `core.js`
-- `store.js` : lecture/ecriture par l'API PHP du carnet, avec `base_rev` (409 en cas de conflit, rejoue)
+- `store.js` : lecture/ecriture par l'API PHP du carnet (jeton Bearer), avec `base_rev` (409 en cas de conflit, rejoue)
 - `core.js` : copie de la couche metier de l'app (source de verite : le depot de l'app)
 
 ## Lancer
 
 ```
 npm install --omit=dev
-MCP_TOKEN=un-long-secret node server.js      # PORT fourni par la plateforme, 3000 sinon
+MCP_TOKEN=... CARNET_API=https://.../api-xxxx.php CARNET_API_TOKEN=... node server.js
 ```
 
-Variables : `MCP_TOKEN` (obligatoire), `PORT`, `CARNET_API` (defaut : l'API de production).
+Variables, toutes obligatoires sauf `PORT` (3000 par defaut) :
+
+- `MCP_TOKEN` : jeton que Claude envoie au serveur MCP (`Authorization: Bearer`)
+- `CARNET_API` : URL complete de l'API PHP du carnet
+- `CARNET_API_TOKEN` : jeton que le serveur MCP envoie a cette API
+
+Aucune adresse ni aucun secret ne vit dans ce depot.
 
 ## Tester
 

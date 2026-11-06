@@ -1,9 +1,11 @@
-/* Imitation locale d'api-k7m2.php pour les tests : etat en memoire, rev, base_rev -> 409 */
+/* Imitation locale de l'API PHP du carnet pour les tests : etat en memoire,
+   jeton Bearer obligatoire, rev, base_rev -> 409 */
 import { createServer } from "node:http";
-export function startFakeApi(initialData) {
+export function startFakeApi(initialData, token) {
   let rev = 1, data = initialData;
   const srv = createServer((req, res) => {
     const send = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
+    if (req.headers.authorization !== "Bearer " + token) return send(401, { error: "auth_requise" });
     if (req.method === "GET") return send(200, { rev, updated: new Date().toISOString(), data });
     let body = ""; req.on("data", c => body += c); req.on("end", () => {
       const j = JSON.parse(body || "{}");

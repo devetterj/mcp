@@ -1,3 +1,5 @@
 node_modules/
 .token
 *.log
+.carnet-api-token
+INFOMANIAK-PRIVE.txt
