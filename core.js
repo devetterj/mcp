@@ -33,6 +33,9 @@ export const PLATES = DEFAULT_PROFILES.salle;
 /* variantes proposees quand la charge est au plafond, dans cet ordre */
 export const VARIANTS = ["tempo 4s", "pause 2s", "unilateral", "serie+"];
 export const MAX_SETS = 5;
+/* banque d'images autorisee pour les illustrations (Free Exercise DB, domaine public) :
+   chaque exercice de la banque a une photo de depart (0.jpg) et d'arrivee (1.jpg) */
+export const IMAGE_DB = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/";
 
 const E = (type, unit, inc, gear, extra = {}) => ({ type, unit, inc, gear, ...extra });
 
@@ -209,7 +212,7 @@ export function exercise(state, name) {
   return { ...t, ...e, n:name, label: e.label || name, unit, r: e.r || t.r, s: e.s || t.s, rest: e.rest || t.rest,
            time: !!(e.time ?? t.time), pdc: !!(e.pdc ?? t.pdc), disabled: e.disabled || null,
            profile: e.profile || "salle", gear: e.gear || "machine", variant: e.variant || null, free: !!e.free,
-           img: e.img || null, anchor: e.anchor || null, start: e.start ?? null, single: !!e.single };
+           img: e.img || null, images: e.images || null, anchor: e.anchor || null, start: e.start ?? null, single: !!e.single };
 }
 export const exercises = (state, profileId = null) => Object.keys(state.program.exercises).map(n => exercise(state, n)).filter(e => !profileId || e.profile === profileId);
 export const profile  = state => state.profiles[state.activeProfile] || state.profiles.salle;
@@ -228,6 +231,17 @@ export function updateProfile(state, id, patch) {
   if (patch.machine_lb > 0) p.machine_lb = Number(patch.machine_lb);
   if (state.activeProfile === id) state.plates = p;
   return p;
+}
+/* illustration en deux photos (depart, arrivee) prises dans la banque d'images ;
+   null retire l'illustration et l'app revient a l'image du dossier img/ */
+export function setExerciseImages(state, name, images, base = IMAGE_DB) {
+  const e = state.program.exercises[name];
+  if (!e) throw new Error("exercice inconnu : " + name);
+  if (images == null) { delete e.images; return exercise(state, name); }
+  const ok = u => typeof u === "string" && u.startsWith(base) && /^[A-Za-z0-9_()'.,\/-]+\.(jpg|jpeg|png)$/.test(u.slice(base.length));
+  if (!ok(images.start) || !ok(images.end)) throw new Error("images refusees : seules les photos de la banque " + base + " sont acceptees");
+  e.images = { start: images.start, end: images.end, source: images.source ? String(images.source).slice(0, 120) : null };
+  return exercise(state, name);
 }
 /* combinaison d'elastiques a monter pour une charge donnee (30 + 20 = 50) */
 export function bandCombo(state, w) {

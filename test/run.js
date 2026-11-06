@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import * as C from "../core.js";
-import { startFakeApi } from "./fake-api.js";
+import { startFakeApi, startFakeImageDb } from "./fake-api.js";
 
 const TOKEN = "test-token-0123456789abcdef";
 const day = n => new Date(Date.now() - n * 86400000).toISOString();
@@ -22,8 +22,9 @@ state.MEAS.push({ date: day(40), bw: "88", waist: "97" });
 
 const API_TOKEN = "api-token-0123456789abcdef";
 const api = await startFakeApi(C.exportAll(state), API_TOKEN);
+const imgdb = await startFakeImageDb();
 const PORT = 18765 + Math.floor(Math.random() * 1000);
-const child = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT), MCP_TOKEN: TOKEN, CARNET_API: api.url, CARNET_API_TOKEN: API_TOKEN }, stdio: ["ignore", "pipe", "inherit"] });
+const child = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT), MCP_TOKEN: TOKEN, CARNET_API: api.url, CARNET_API_TOKEN: API_TOKEN, EXERCISE_DB_ROOT: imgdb.root }, stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((res, rej) => { child.stdout.on("data", d => { if (String(d).includes("ecoute")) res(); }); child.on("exit", c => rej(new Error("serveur termine " + c))); });
 const base = `http://127.0.0.1:${PORT}`;
 let failures = 0;
@@ -39,9 +40,9 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: "Bearer " + TOKEN } } }));
   const call = async (name, args = {}) => { const r = await client.callTool({ name, arguments: args }); const text = r.content[0].text; if (r.isError) throw new Error(text); return JSON.parse(text); };
 
-  await check("liste des 14 outils", async () => {
+  await check("liste des 16 outils", async () => {
     const names = (await client.listTools()).tools.map(t => t.name).sort();
-    assert.deepEqual(names, ["add_note", "clear_next_targets", "disable_exercise", "enable_exercise", "get_bodyweight", "get_history", "get_last_session", "get_measurements", "get_next_plan", "get_notes", "get_program", "get_stagnation_report", "set_next_targets", "update_program"]);
+    assert.deepEqual(names, ["add_note", "clear_next_targets", "disable_exercise", "enable_exercise", "get_bodyweight", "get_history", "get_last_session", "get_measurements", "get_next_plan", "get_notes", "get_program", "get_stagnation_report", "search_exercise_images", "set_exercise_image", "set_next_targets", "update_program"]);
   });
   await check("get_program", async () => { const p = await call("get_program"); assert.equal(p.sessions.length, 4); assert.ok(["ba", "ha"].includes(p.next_session)); assert.ok(p.sessions[0].exercises[0].range); });
   await check("get_history resume + filtres", async () => {
@@ -85,6 +86,17 @@ try {
     const u = await call("update_program", { action: "update_profile", profile: "maison", plates: { dumbbell: [2, 3.25, 4.5, 8, 20] } }); assert.deepEqual(u.plates.dumbbell, [2, 3.25, 4.5, 8, 20]);
     const back = await call("update_program", { action: "set_profile", profile: "salle" }); assert.equal(back.next_session, "ba");
   });
+  await check("illustrations : recherche, association, refus d'une source etrangere, retrait", async () => {
+    const f = await call("search_exercise_images", { query: "split squat dumbbell" });
+    assert.equal(f.results[0].db_id, "Split_Squat_with_Dumbbells"); assert.ok(f.results[0].start_url.endsWith("/0.jpg"));
+    const a = await call("set_exercise_image", { exercise: "Fentes fendues haltere", db_id: "Split_Squat_with_Dumbbells" });
+    assert.ok(a.images.end.endsWith("Split_Squat_with_Dumbbells/1.jpg")); assert.equal(api.get().data.program.exercises["Fentes fendues haltere"].images.source, "Split_Squat_with_Dumbbells");
+    await assert.rejects(call("set_exercise_image", { exercise: "Fentes fendues haltere", start_url: "https://evil.example/a.jpg", end_url: "https://evil.example/b.jpg" }), /acceptees/);
+    await assert.rejects(call("set_exercise_image", { exercise: "Fentes fendues haltere", db_id: "N_existe_pas" }), /introuvable/);
+    const p = await call("get_program"); const fx = p.sessions.flatMap(s => s.exercises).find(e => e.name === "Fentes fendues haltere");
+    assert.ok(!fx || fx.images, "visible dans get_program quand l'exercice est au programme");
+    const c = await call("set_exercise_image", { exercise: "Fentes fendues haltere", clear: true }); assert.equal(c.images, null);
+  });
   await check("sans CARNET_API_TOKEN le serveur refuse de demarrer", async () => {
     const bad = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT + 1), MCP_TOKEN: TOKEN, CARNET_API: api.url, CARNET_API_TOKEN: "" }, stdio: "ignore" });
     const code = await new Promise(r => bad.on("exit", r)); assert.equal(code, 1);
@@ -101,6 +113,6 @@ try {
     assert.equal(readFileSync(twin, "utf8"), readFileSync(new URL("../core.js", import.meta.url), "utf8"));
   });
   await client.close();
-} finally { child.kill(); api.srv.close(); }
+} finally { child.kill(); api.srv.close(); imgdb.srv.close(); }
 console.log(failures ? `\n${failures} test(s) en echec` : "\ntous les tests passent");
 process.exit(failures ? 1 : 0);

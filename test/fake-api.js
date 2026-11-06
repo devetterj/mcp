@@ -15,3 +15,18 @@ export function startFakeApi(initialData, token) {
   });
   return new Promise(resolve => srv.listen(0, "127.0.0.1", () => resolve({ srv, url: `http://127.0.0.1:${srv.address().port}/api`, get: () => ({ rev, data }) })));
 }
+
+/* Imitation locale de la banque d'images : index + photos de deux exercices */
+export function startFakeImageDb() {
+  const index = [
+    { id: "Split_Squat_with_Dumbbells", name: "Split Squat with Dumbbells", equipment: "dumbbell", primaryMuscles: ["quadriceps"], images: ["Split_Squat_with_Dumbbells/0.jpg", "Split_Squat_with_Dumbbells/1.jpg"] },
+    { id: "Barbell_Hip_Thrust", name: "Barbell Hip Thrust", equipment: "barbell", primaryMuscles: ["glutes"], images: ["Barbell_Hip_Thrust/0.jpg", "Barbell_Hip_Thrust/1.jpg"] },
+  ];
+  const srv = createServer((req, res) => {
+    const path = req.url.split("?")[0];
+    if (path === "/dist/exercises.json") { res.writeHead(200, { "Content-Type": "application/json" }); return res.end(JSON.stringify(index)); }
+    if (/^\/exercises\/(Split_Squat_with_Dumbbells|Barbell_Hip_Thrust)\/[01]\.jpg$/.test(path)) { res.writeHead(200, { "Content-Type": "image/jpeg" }); return res.end(req.method === "HEAD" ? undefined : "jpg"); }
+    res.writeHead(404); res.end();
+  });
+  return new Promise(resolve => srv.listen(0, "127.0.0.1", () => resolve({ srv, root: `http://127.0.0.1:${srv.address().port}/` })));
+}

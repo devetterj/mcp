@@ -5,6 +5,22 @@ import * as C from "./core.js";
 import { load, modify } from "./store.js";
 
 const DAY = 86400000;
+/* banque d'images (Free Exercise DB, domaine public) : index des exercices et
+   deux photos par exercice, exercises/<id>/0.jpg (depart) et 1.jpg (arrivee) */
+const DB_ROOT = process.env.EXERCISE_DB_ROOT || "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/";
+const DB_IMAGES = DB_ROOT + "exercises/";
+let dbIndex = null;
+async function exerciseDb() {
+  if (dbIndex) return dbIndex;
+  const r = await fetch(DB_ROOT + "dist/exercises.json");
+  if (!r.ok) throw new Error("banque d'images injoignable (" + r.status + ")");
+  dbIndex = await r.json();
+  return dbIndex;
+}
+async function isImage(url) {
+  const r = await fetch(url, { method: "HEAD" });
+  return r.ok && /^image\//.test(r.headers.get("content-type") || "");
+}
 const ok = data => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
 const fail = e => { console.error("outil:", e && e.stack ? e.stack.split("\n").slice(0, 3).join(" | ") : e); return { content: [{ type: "text", text: "Erreur : " + (e && e.message ? e.message : String(e)) }], isError: true }; };
 const run = fn => async args => { try { return ok(await fn(args || {})); } catch (e) { return fail(e); } };
@@ -30,7 +46,7 @@ function exerciseView(state, ex, block) {
   return { name: ex.n, label: ex.label, block: block || null, type: ex.type, range: ex.r, sets: ex.s, increment: ex.inc,
     unit: ex.time ? "s" : ex.unit, gear: ex.gear, rest_s: ex.rest, timed: !!ex.time, bodyweight_ok: !!ex.pdc,
     disabled: ex.disabled ? { since: d10(ex.disabled.since), reason: ex.disabled.reason } : null,
-    profile: ex.profile, variant: ex.variant, free_variant: ex.free, anchor: ex.anchor, max_load: C.maxLoad(state, ex),
+    profile: ex.profile, variant: ex.variant, free_variant: ex.free, anchor: ex.anchor, max_load: C.maxLoad(state, ex), images: ex.images,
     next_target: state.next_targets[ex.n] || null };
 }
 
@@ -279,6 +295,48 @@ export function register(server) {
   }, run(async ({ exercise, weight, reps, author = "claude" }) => {
     const { rev, result } = await modify(state => C.setNextTargets(state, exercise, { w: weight ?? null, reps: reps || null, author }));
     return { rev, exercise, target: result };
+  }));
+
+  server.registerTool("search_exercise_images", {
+    title: "Chercher une illustration",
+    description: "Cherche dans la banque d'images libre de droits Free Exercise DB (plus de 800 exercices, chacun avec une photo de depart et une photo d'arrivee). La recherche porte sur le nom anglais de l'exercice (ex. 'split squat dumbbell', 'hip thrust', 'face pull'). Renvoie l'identifiant (db_id) a passer a set_exercise_image, le materiel, les muscles et les deux URL de photos. Regarde les photos avant de choisir : le materiel et la position doivent correspondre a l'exercice du carnet.",
+    inputSchema: z.object({ query: z.string().min(2).describe("Mots-cles en anglais"), limit: z.number().int().min(1).max(20).optional() }),
+    annotations: { readOnlyHint: true }
+  }, run(async ({ query, limit = 8 }) => {
+    const db = await exerciseDb();
+    const words = query.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+    const scored = db.map(e => {
+      const hay = (e.name + " " + e.id + " " + (e.equipment || "") + " " + (e.primaryMuscles || []).join(" ")).toLowerCase();
+      const name = e.name.toLowerCase();
+      const score = words.reduce((a, w) => a + (name.includes(w) ? 3 : hay.includes(w) ? 1 : 0), 0);
+      return { e, score };
+    }).filter(x => x.score > 0 && (x.e.images || []).length >= 2).sort((a, b) => b.score - a.score).slice(0, limit);
+    return { results: scored.map(({ e }) => ({ db_id: e.id, name: e.name, equipment: e.equipment, muscles: e.primaryMuscles,
+      start_url: DB_IMAGES + e.images[0], end_url: DB_IMAGES + e.images[1] })) };
+  }));
+
+  server.registerTool("set_exercise_image", {
+    title: "Associer une illustration",
+    description: "Associe a un exercice du carnet deux photos de la banque Free Exercise DB : position de depart et position d'arrivee, affichees cote a cote dans l'app quand on touche l'icone image de l'exercice. Donne soit db_id (trouve avec search_exercise_images), soit start_url et end_url de cette meme banque ; toute autre source est refusee. Les deux photos sont verifiees avant l'enregistrement. clear = true retire l'illustration (l'app revient a son image par defaut).",
+    inputSchema: z.object({
+      exercise: z.string().describe("Nom interne exact de l'exercice (voir get_program)"),
+      db_id: z.string().optional().describe("Identifiant Free Exercise DB, ex. Split_Squat_with_Dumbbells"),
+      start_url: z.string().optional(), end_url: z.string().optional(),
+      clear: z.boolean().optional()
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+  }, run(async ({ exercise, db_id, start_url, end_url, clear }) => {
+    if (clear) { const { rev } = await modify(state => C.setExerciseImages(state, exercise, null, DB_IMAGES)); return { rev, exercise, images: null }; }
+    let images;
+    if (db_id) {
+      if (!/^[A-Za-z0-9_()'.,-]+$/.test(db_id)) throw new Error("db_id invalide");
+      images = { start: DB_IMAGES + db_id + "/0.jpg", end: DB_IMAGES + db_id + "/1.jpg", source: db_id };
+    } else if (start_url && end_url) images = { start: start_url, end: end_url, source: null };
+    else throw new Error("donne db_id, ou start_url et end_url");
+    if (!images.start.startsWith(DB_IMAGES) || !images.end.startsWith(DB_IMAGES)) throw new Error("seules les photos de " + DB_IMAGES + " sont acceptees");
+    if (!(await isImage(images.start)) || !(await isImage(images.end))) throw new Error("photo introuvable dans la banque : verifie db_id avec search_exercise_images");
+    const { rev, result } = await modify(state => C.setExerciseImages(state, exercise, images, DB_IMAGES));
+    return { rev, exercise, label: result.label, images: result.images };
   }));
 
   server.registerTool("clear_next_targets", {
