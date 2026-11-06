@@ -5,7 +5,7 @@
    modification des donnees passe par ces fonctions.
    ============================================================ */
 
-export const VERSION = 5;
+export const VERSION = 6;
 
 /* fourchettes et repos par type d'exercice (modifiables par exercice) */
 export const TYPES = {
@@ -36,9 +36,18 @@ export const MAX_SETS = 5;
 
 const E = (type, unit, inc, gear, extra = {}) => ({ type, unit, inc, gear, ...extra });
 
+/* seance Bas unique de la Salle (3 seances par semaine) : le meilleur de
+   Bas A et Bas B, avec les noms d'exercices existants pour garder l'historique */
+const BAS_SALLE = () => [
+  { code:"A", ex:["Presse a cuisses"] },
+  { code:"B", ex:["Hip thrust", "Souleve de terre roumain"] },
+  { code:"C", ex:["Leg extension", "Leg curl allonge"] },
+  { code:"D", ex:["Mollets a la presse", "Planche"] },
+];
+
 export const DEFAULT_PROGRAM = {
-  rotation: ["ha", "ba", "hb", "bb"],
-  rotations: { salle: ["ha", "ba", "hb", "bb"], maison: ["mha", "mb", "mhb"] },
+  rotation: ["ha", "ba", "hb"],
+  rotations: { salle: ["ha", "ba", "hb"], maison: ["mha", "mb", "mhb"] },
   sessions: [
     { id:"mha", name:"Maison — Haut A (poussee)", min:60, profile:"maison",
       warm:"3 min corde a sauter ou montees de genoux + rotations d'epaules + face pull elastique 10 kg x 15 + 1 serie legere de developpe incline.",
@@ -70,14 +79,9 @@ export const DEFAULT_PROGRAM = {
         { code:"B", ex:["Developpe epaules poulie", "Rowing haltere unilateral"] },
         { code:"C", ex:["Elevations laterales poulie basse", "Curl poulie pupitre", "Extension triceps corde"] },
       ] },
-    { id:"ba", name:"Bas du corps A", min:60,
+    { id:"ba", name:"Bas du corps", min:60,
       warm:"5 min velo + cat-cow x 10 + bird dog 2 x 8 + 20 squats a vide + 2 series montantes a la presse.",
-      blocks:[
-        { code:"A", ex:["Presse a cuisses"] },
-        { code:"B", ex:["Souleve de terre roumain", "Planche"] },
-        { code:"C", ex:["Leg extension", "Leg curl allonge"] },
-        { code:"D", ex:["Mollets a la presse"] },
-      ] },
+      blocks: BAS_SALLE() },
     { id:"hb", name:"Haut du corps B", min:60,
       warm:"4 min rameur + face pull leger 2 x 15 + 1 serie legere de developpe couche.",
       blocks:[
@@ -177,6 +181,14 @@ export function migrate(raw) {
   if (!s.program.rotations || typeof s.program.rotations !== "object") s.program.rotations = { salle: s.program.rotation.slice(), maison: clone(DEFAULT_PROGRAM.rotations.maison) };
   for (const k of Object.keys(DEFAULT_PROGRAM.rotations)) if (!Array.isArray(s.program.rotations[k]) || !s.program.rotations[k].length) s.program.rotations[k] = clone(DEFAULT_PROGRAM.rotations[k]);
   for (const sess of DEFAULT_PROGRAM.sessions) if (!s.program.sessions.some(x => x.id === sess.id)) s.program.sessions.push(clone(sess));
+  /* v6 : la Salle passe de 4 a 3 seances (Haut A, Bas, Haut B). Bas B reste
+     dans le programme pour son historique, mais sort de la rotation. */
+  if ((Number(raw && raw.v) || 0) < 6 && JSON.stringify(s.program.rotations.salle) === JSON.stringify(["ha", "ba", "hb", "bb"])) {
+    s.program.rotations.salle = ["ha", "ba", "hb"];
+    s.program.rotation = ["ha", "ba", "hb"];
+    const ba = s.program.sessions.find(x => x.id === "ba");
+    if (ba) { ba.name = "Bas du corps"; ba.blocks = BAS_SALLE(); }
+  }
   for (const [n, e] of Object.entries(DEFAULT_PROGRAM.exercises)) if (!s.program.exercises[n]) s.program.exercises[n] = clone(e);
   s.plates = s.profiles[s.activeProfile];
   if (!Array.isArray(s.notes)) s.notes = [];

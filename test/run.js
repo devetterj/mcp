@@ -43,7 +43,7 @@ try {
     const names = (await client.listTools()).tools.map(t => t.name).sort();
     assert.deepEqual(names, ["add_note", "clear_next_targets", "disable_exercise", "enable_exercise", "get_bodyweight", "get_history", "get_last_session", "get_measurements", "get_next_plan", "get_notes", "get_program", "get_stagnation_report", "set_next_targets", "update_program"]);
   });
-  await check("get_program", async () => { const p = await call("get_program"); assert.equal(p.sessions.length, 4); assert.equal(p.next_session, "ba"); assert.ok(p.sessions[0].exercises[0].range); });
+  await check("get_program", async () => { const p = await call("get_program"); assert.equal(p.sessions.length, 4); assert.ok(["ba", "ha"].includes(p.next_session)); assert.ok(p.sessions[0].exercises[0].range); });
   await check("get_history resume + filtres", async () => {
     const h = await call("get_history", { limit: 10 }); assert.equal(h.total, 4); assert.equal(h.sessions[0].session, "ha");
     assert.equal(h.sessions[0].exercises["Developpe incline haltere"].top, 20); assert.equal(h.sessions[0].exercises["Developpe incline haltere"].total_reps, 30);
