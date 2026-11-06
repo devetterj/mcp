@@ -480,12 +480,24 @@ export function sessionGear(state, sessionId, now = Date.now()) {
 }
 
 /* ------------------------------------------------------------ rotation */
+/* Prochaine seance : celle de la rotation faite le moins recemment (jamais
+   faite = la plus ancienne). Quand on suit l'ordre, c'est la suivante dans
+   le cycle ; apres un changement de rotation ou une seance sautee, c'est la
+   seance en retard qui revient. A egalite, l'ordre de la rotation tranche
+   (la suivante apres la derniere seance enregistree d'abord). */
 export function nextSession(state) {
   const rot = rotation(state);
   if (!state.HIST.length) return rot[0];
-  const last = state.HIST[state.HIST.length - 1].id;
-  const i = rot.lastIndexOf(last);
-  return rot[(i + 1) % rot.length];
+  const lastDate = Object.fromEntries(rot.map(id => [id, 0]));
+  for (const h of state.HIST) if (Object.prototype.hasOwnProperty.call(lastDate, h.id)) lastDate[h.id] = Math.max(lastDate[h.id], new Date(h.date).getTime());
+  const lastId = state.HIST[state.HIST.length - 1].id;
+  const start = (rot.indexOf(lastId) + 1) % rot.length;
+  let best = null;
+  for (let k = 0; k < rot.length; k++) {
+    const id = rot[(start + k) % rot.length];
+    if (best === null || lastDate[id] < lastDate[best]) best = id;
+  }
+  return best;
 }
 
 /* ------------------------------------------------------------ enregistrement */
